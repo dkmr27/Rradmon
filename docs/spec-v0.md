@@ -158,6 +158,17 @@ measurable as the gap between the original (hops 0) and the relayed copy: on
 the bench rig rnsd rebroadcast three announces 1.5 s, 21 s and 41 s after the
 originals, which is its announce cap at work.
 
+Interface discovery announces (`rnstransport.discovery.interface`, a SINGLE
+destination) carry app data `flags (1) || msgpack map || stamp (32)`; flag
+0x02 means the map is encrypted to a network identity (then unreadable). Map
+keys (RNS `Discovery.py`): 0x00 interface type, 0x01 transport, 0x02
+reachable on, 0x03 latitude, 0x04 longitude, 0x05 height, 0x06 port,
+0x07 IFAC netname, 0x09 frequency, 0x0A bandwidth, 0x0B SF, 0x0C CR,
+0x0D modulation, 0x0E channel, 0xFC transport version, 0xFD implementation,
+0xFE transport ID, 0xFF name. Verified 2026-11-12 on Rrptr 0.1.0 (150 B app
+data, unencrypted, sent as a split packet). This is Phase 3's position
+source; positions are real locations, so keep such captures out of the repo.
+
 Verified on the bench corpus (`testdata/rig-corpus1.jsonl`): all 7 proofs
 match the truncated hash of an earlier packet (probes, split probes and link
 requests), link traffic is addressed to the link request's truncated hash, all
