@@ -29,6 +29,7 @@ type sessionRec struct {
 	BwHz     uint32 `json:"bw_hz"`
 	SF       uint8  `json:"sf"`
 	CR       uint8  `json:"cr"`
+	Promisc  bool   `json:"promisc"`
 	Firmware string `json:"fw"`
 	Platform string `json:"platform"`
 	Rradmon  string `json:"rradmon"`
@@ -40,6 +41,7 @@ type frameRec struct {
 	RSSI  *float32 `json:"rssi,omitempty"`
 	SNR   *float32 `json:"snr,omitempty"`
 	Len   int      `json:"len"`
+	Raw   bool     `json:"raw"`
 	Frame string   `json:"frame"`
 }
 
@@ -72,6 +74,7 @@ func runCapture(args []string) error {
 	bw := fs.Uint("bw", 250000, "bandwidth, Hz")
 	sf := fs.Uint("sf", 9, "spreading factor")
 	cr := fs.Uint("cr", 5, "coding rate denominator (5 = 4/5)")
+	promisc := fs.Bool("promisc", true, "raw frames (promiscuous); false = whole packets, for firmware whose promiscuous mode does not deliver")
 	quiet := fs.Bool("quiet", false, "do not print each frame")
 	dur := fs.Duration("for", 0, "stop after this long (0 = until Ctrl+C)")
 	fs.Parse(args)
@@ -80,7 +83,7 @@ func runCapture(args []string) error {
 		return errors.New("capture: -port is required")
 	}
 
-	cfg := rnode.RadioConfig{FreqHz: uint32(*freq), BandwidthHz: uint32(*bw), SF: uint8(*sf), CR: uint8(*cr), TxPowerDBm: 2}
+	cfg := rnode.RadioConfig{FreqHz: uint32(*freq), BandwidthHz: uint32(*bw), SF: uint8(*sf), CR: uint8(*cr), TxPowerDBm: 2, Promiscuous: *promisc}
 
 	if *out == "" {
 		*out = filepath.Join("captures", time.Now().Format("20060102-150405")+".jsonl")
@@ -117,12 +120,16 @@ func runCapture(args []string) error {
 	}
 	info := dev.Info()
 	fw := fmt.Sprintf("%d.%d", info.FirmwareMajor, info.FirmwareMinor)
-	fmt.Fprintf(os.Stderr, "RNode firmware %s on %s, promiscuous. Writing %s. Ctrl+C to stop.\n",
-		fw, rnode.PlatformName(info.Platform), *out)
+	mode := "normal mode (whole packets)"
+	if cfg.Promiscuous {
+		mode = "promiscuous (raw frames)"
+	}
+	fmt.Fprintf(os.Stderr, "RNode firmware %s on %s, %s. Writing %s. Ctrl+C to stop.\n",
+		fw, rnode.PlatformName(info.Platform), mode, *out)
 
 	if err := enc.Encode(sessionRec{
 		Type: "session", T: ts(time.Now()), Port: *port,
-		FreqHz: cfg.FreqHz, BwHz: cfg.BandwidthHz, SF: cfg.SF, CR: cfg.CR,
+		FreqHz: cfg.FreqHz, BwHz: cfg.BandwidthHz, SF: cfg.SF, CR: cfg.CR, Promisc: cfg.Promiscuous,
 		Firmware: fw, Platform: rnode.PlatformName(info.Platform), Rradmon: version,
 	}); err != nil {
 		return err
@@ -145,7 +152,7 @@ func runCapture(args []string) error {
 			switch e := ev.(type) {
 			case rnode.Frame:
 				frames++
-				rec := frameRec{Type: "frame", T: ts(e.T), Len: len(e.Data), Frame: hex.EncodeToString(e.Data)}
+				rec := frameRec{Type: "frame", T: ts(e.T), Len: len(e.Data), Raw: e.Raw, Frame: hex.EncodeToString(e.Data)}
 				if e.HasSignal {
 					rssi, snr := e.RSSI, e.SNR
 					rec.RSSI, rec.SNR = &rssi, &snr
@@ -198,18 +205,24 @@ func describeFrame(f rnode.Frame) string {
 		sig = fmt.Sprintf("%6.1f dBm %5.2f dB", f.RSSI, f.SNR)
 	}
 	head := fmt.Sprintf("%s %s %3dB", f.T.Format("15:04:05.000"), sig, len(f.Data))
-	if len(f.Data) < 3 {
-		return head + " short frame"
-	}
-	h := f.Data[0]
+	p := f.Data
 	split := ""
-	if h&0x01 != 0 {
-		split = fmt.Sprintf(" split seq=%x", h>>4)
-		if len(f.Data)-1 < 254 {
-			return head + split + " (second half)"
+	if f.Raw {
+		if len(p) < 3 {
+			return head + " short frame"
 		}
+		h := p[0]
+		if h&0x01 != 0 {
+			split = fmt.Sprintf(" split seq=%x", h>>4)
+			if len(p)-1 < 254 {
+				return head + split + " (second half)"
+			}
+		}
+		p = p[1:]
 	}
-	p := f.Data[1:]
+	if len(p) < 2 {
+		return head + " short packet"
+	}
 	flags := p[0]
 	if flags&0x80 != 0 {
 		return head + split + " IFAC"

@@ -85,8 +85,19 @@ byte**. Each received frame arrives as three KISS frames, in this order:
 | `CMD_STAT_SNR` | `0x24` | 1 byte, signed | `snr_db = int8(byte) * 0.25` |
 | `CMD_DATA` | `0x00` | raw frame | header byte + payload |
 
-This holds on AVR, ESP32 and nRF52 builds (the ESP32/nRF52 path queues the packet
-with its RSSI/SNR and emits the same three frames later).
+Verified 2026-11-12 on a T3S3 RNode (ESP32-S3, firmware 1.86) on COM32: 12/12
+probes and 12/12 proofs captured, header byte present, split bit clear.
+
+Caveat: in the microReticulum_Firmware fork source, the ESP32/nRF52 promiscuous
+branch sets `packet_ready` but never queues the frame, so that build would
+deliver nothing. The COM32 firmware does not have this problem. Rradmon keeps a
+normal (non-promiscuous) mode as a fallback: the RNode then sends whole
+Reticulum packets without the header byte (verified on COM32: 8/8 probe
+packets). Normal mode loses split-frame and orphan visibility.
+
+Test rig: rnsd on this PC with an RNode on COM19 probing a Rrptr on COM15
+(`rnprobe rnstransport.probe 14db86ef43369aca88ac657156c9fc90`) gives known
+DATA (132 B raw) and PROOF (84 B raw) frames on demand.
 
 Useful extra reports (ESP32/nRF52 firmware):
 

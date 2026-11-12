@@ -54,6 +54,11 @@ type RadioConfig struct {
 	SF          uint8
 	CR          uint8 // 5..8 for 4/5..4/8
 	TxPowerDBm  uint8 // unused (Rradmon never transmits) but the firmware requires it
+	// Promiscuous asks for raw frames (header byte included, split packets
+	// not joined). When false the RNode joins split packets and sends whole
+	// Reticulum packets without the header byte; a fallback for firmware
+	// whose promiscuous mode does not deliver frames (spec §2).
+	Promiscuous bool
 }
 
 func (c RadioConfig) String() string {
@@ -81,7 +86,8 @@ type Frame struct {
 	RSSI      float32 // dBm
 	SNR       float32 // dB
 	HasSignal bool    // RSSI and SNR arrived just before this frame
-	Data      []byte  // raw frame, including the RNode header byte
+	Data      []byte  // raw frame incl. RNode header byte if Raw, else a whole Reticulum packet
+	Raw       bool
 }
 
 // ChannelStats is a periodic CMD_STAT_CHTM report.
@@ -129,6 +135,7 @@ type Device struct {
 	haveRSSI, haveSNR bool
 
 	configured atomic.Bool
+	promisc    atomic.Bool
 
 	done    chan struct{}
 	readErr error
@@ -187,6 +194,7 @@ func (d *Device) Configure(ctx context.Context, cfg RadioConfig) error {
 	d.mu.Lock()
 	d.info.RadioOn, d.info.Promiscuous = false, false
 	d.mu.Unlock()
+	d.promisc.Store(cfg.Promiscuous)
 
 	cmds := []kissCmd{
 		{CmdFrequency, be32(cfg.FreqHz)},
@@ -195,7 +203,7 @@ func (d *Device) Configure(ctx context.Context, cfg RadioConfig) error {
 		{CmdSF, []byte{cfg.SF}},
 		{CmdCR, []byte{cfg.CR}},
 		{CmdRadioState, []byte{0x01}},
-		{CmdPromisc, []byte{0x01}},
+		{CmdPromisc, []byte{boolByte(cfg.Promiscuous)}},
 	}
 	for _, c := range cmds {
 		if err := d.send(c.cmd, c.data); err != nil {
@@ -225,6 +233,13 @@ func (d *Device) Close() error {
 type kissCmd struct {
 	cmd  byte
 	data []byte
+}
+
+func boolByte(b bool) byte {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func be32(v uint32) []byte { return []byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)} }
@@ -295,8 +310,8 @@ func (d *Device) validate(want RadioConfig) error {
 	if !info.RadioOn {
 		problems = append(problems, "radio did not report on")
 	}
-	if !info.Promiscuous {
-		problems = append(problems, "promiscuous mode not confirmed")
+	if info.Promiscuous != want.Promiscuous {
+		problems = append(problems, fmt.Sprintf("promiscuous mode %v, want %v", info.Promiscuous, want.Promiscuous))
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("rnode: configuration not confirmed: %v", problems)
@@ -346,7 +361,7 @@ func (d *Device) handle(f kiss.Frame) Event {
 			d.snr, d.snrAt, d.haveSNR = float32(int8(f.Data[0]))*0.25, now, true
 		}
 	case CmdData:
-		fr := Frame{T: now, Data: f.Data}
+		fr := Frame{T: now, Data: f.Data, Raw: d.promisc.Load()}
 		if d.haveRSSI && d.haveSNR && now.Sub(d.rssiAt) < signalMaxAge && now.Sub(d.snrAt) < signalMaxAge {
 			fr.RSSI, fr.SNR, fr.HasSignal = d.rssi, d.snr, true
 		}

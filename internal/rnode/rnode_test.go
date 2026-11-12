@@ -76,7 +76,7 @@ func (f *fakeRNode) run() {
 	}
 }
 
-var testCfg = RadioConfig{FreqHz: 925875000, BandwidthHz: 250000, SF: 9, CR: 5, TxPowerDBm: 2}
+var testCfg = RadioConfig{FreqHz: 925875000, BandwidthHz: 250000, SF: 9, CR: 5, TxPowerDBm: 2, Promiscuous: true}
 
 func TestStartAndReceive(t *testing.T) {
 	fake, conn := newFake(t)
