@@ -2,22 +2,41 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
 )
 
 var version = "0.0.0-dev"
 
+const usage = `usage: rradmon <command> [flags]
+
+commands:
+  capture   read an RNode in promiscuous mode and save raw frames (JSON lines)
+  ports     list serial ports
+  version   print version
+`
+
 func main() {
-	showVersion := flag.Bool("version", false, "print version and exit")
-	flag.Parse()
-
-	if *showVersion {
-		fmt.Println("rradmon", version)
-		return
+	if len(os.Args) < 2 {
+		fmt.Fprint(os.Stderr, usage)
+		os.Exit(2)
 	}
-
-	fmt.Fprintln(os.Stderr, "rradmon: nothing to run yet (Phase 0)")
-	os.Exit(1)
+	var err error
+	switch os.Args[1] {
+	case "capture":
+		err = runCapture(os.Args[2:])
+	case "ports":
+		err = runPorts()
+	case "version", "-version", "--version":
+		fmt.Println("rradmon", version)
+	case "help", "-h", "--help":
+		fmt.Print(usage)
+	default:
+		fmt.Fprintf(os.Stderr, "rradmon: unknown command %q\n\n%s", os.Args[1], usage)
+		os.Exit(2)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "rradmon:", err)
+		os.Exit(1)
+	}
 }

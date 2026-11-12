@@ -4,4 +4,4 @@
 *.db
 *.db-wal
 *.db-shm
-/captures/*.local.*
+/captures/
