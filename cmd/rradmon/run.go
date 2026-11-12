@@ -12,20 +12,22 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/dkmr27/Rradmon/internal/decode"
 	"github.com/dkmr27/Rradmon/internal/ingest"
+	"github.com/dkmr27/Rradmon/internal/mqtt"
 	"github.com/dkmr27/Rradmon/internal/reassembly"
 	"github.com/dkmr27/Rradmon/internal/reticulum"
 	"github.com/dkmr27/Rradmon/internal/rnode"
 	"github.com/dkmr27/Rradmon/internal/store"
 )
 
-// runRun reads an RNode and stores everything it hears.
+// runRun reads an RNode and/or MQTT observers and stores everything heard.
 func runRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	port := fs.String("port", "", "serial port of the RNode, e.g. COM32 (required)")
+	port := fs.String("port", "", "serial port of a local RNode, e.g. COM32")
 	dbPath := fs.String("db", "rradmon.db", "database file")
 	freq := fs.Uint("freq", 925875000, "frequency, Hz")
 	bw := fs.Uint("bw", 250000, "bandwidth, Hz")
@@ -35,10 +37,12 @@ func runRun(args []string) error {
 	quiet := fs.Bool("quiet", false, "do not print each packet")
 	dur := fs.Duration("for", 0, "stop after this long (0 = until Ctrl+C)")
 	httpAddr := fs.String("http", "127.0.0.1:8080", "web UI address (empty to disable)")
+	broker := brokerFlags(fs)
+	allow := fs.String("mqtt-allow", "", "comma-separated observer ids to accept (default all)")
 	fs.Parse(args)
-	if *port == "" {
+	if *port == "" && broker.URL == "" {
 		fs.Usage()
-		return errors.New("run: -port is required")
+		return errors.New("run: give -port, -mqtt, or both")
 	}
 
 	st, err := store.Open(*dbPath)
@@ -74,21 +78,46 @@ func runRun(args []string) error {
 		defer cancel()
 	}
 
-	dev, err := rnode.Open(*port, log)
-	if err != nil {
-		return err
+	if broker.URL != "" {
+		var ids []string
+		if *allow != "" {
+			ids = strings.Split(*allow, ",")
+		}
+		h := &mqttIngest{in: in, st: st, network: radio.Slug(), log: log}
+		sub, err := mqtt.NewSubscriber(*broker, h, mqtt.SubscribeOptions{Allow: ids}, log)
+		if err != nil {
+			return err
+		}
+		defer sub.Close()
+		fmt.Fprintf(os.Stderr, "Subscribed to %s for network %s.\n", broker.Redacted(), radio.Slug())
 	}
-	defer dev.Close()
-	cfg := rnode.RadioConfig{FreqHz: radio.FreqHz, BandwidthHz: radio.BandwidthHz, SF: radio.SF, CR: radio.CR,
-		TxPowerDBm: 2, Promiscuous: *promisc}
-	events := make(chan rnode.Event, 256)
-	fmt.Fprintf(os.Stderr, "Opening %s, configuring %s ...\n", *port, cfg)
-	if err := dev.Start(ctx, cfg, events); err != nil {
-		return err
+
+	// Nil channels never fire, so the loop below also works without a radio.
+	var (
+		dev     *rnode.Device
+		devDone <-chan struct{}
+		events  chan rnode.Event
+		cfg     rnode.RadioConfig
+	)
+	if *port != "" {
+		dev, err = rnode.Open(*port, log)
+		if err != nil {
+			return err
+		}
+		defer dev.Close()
+		cfg = rnode.RadioConfig{FreqHz: radio.FreqHz, BandwidthHz: radio.BandwidthHz, SF: radio.SF, CR: radio.CR,
+			TxPowerDBm: 2, Promiscuous: *promisc}
+		events = make(chan rnode.Event, 256)
+		fmt.Fprintf(os.Stderr, "Opening %s, configuring %s ...\n", *port, cfg)
+		if err := dev.Start(ctx, cfg, events); err != nil {
+			return err
+		}
+		devDone = dev.Done()
+		info := dev.Info()
+		fmt.Fprintf(os.Stderr, "RNode firmware %d.%d on %s.\n",
+			info.FirmwareMajor, info.FirmwareMinor, rnode.PlatformName(info.Platform))
 	}
-	info := dev.Info()
-	fmt.Fprintf(os.Stderr, "RNode firmware %d.%d on %s. Storing in %s. Ctrl+C to stop.\n",
-		info.FirmwareMajor, info.FirmwareMinor, rnode.PlatformName(info.Platform), *dbPath)
+	fmt.Fprintf(os.Stderr, "Storing in %s. Ctrl+C to stop.\n", *dbPath)
 
 	obs, src := "rnode:"+*port, "rnode-serial"
 	tick := time.NewTicker(time.Second)
@@ -111,7 +140,7 @@ func runRun(args []string) error {
 			in.Flush(time.Now().Add(time.Hour))
 			fmt.Fprintln(os.Stderr, "\nStopped.")
 			return printSummary(st)
-		case <-dev.Done():
+		case <-devDone:
 			if err := dev.Err(); err != nil && !errors.Is(err, io.EOF) && ctx.Err() == nil {
 				return fmt.Errorf("device stopped: %w", err)
 			}

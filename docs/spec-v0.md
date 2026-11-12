@@ -264,6 +264,30 @@ last-will publishes `{"v":1,"observer":"…","online":false}` retained.
 Validation on ingest: `v` known, `len` ≤ 255 (one frame), `rssi` in −160..0,
 `snr` in −32..32, `t_obs` within ±1 day of `t_rx`, rate limit per observer.
 
+As implemented (`internal/mqtt`, 2026-11-12):
+
+- `frame` is base64 (Go `[]byte` JSON). Optional `"raw": false` marks a whole
+  Reticulum packet from an RNode in normal mode (then up to 508 bytes);
+  absent means a raw frame with the RNode header byte (2–255 bytes).
+- Observers never send `stripped` frames; the server rejects them.
+- The topic's network segment must equal the message's radio
+  (`<freq>-<bw>-<sf>-<cr>`), and the topic's observer must equal `observer`
+  (`[A-Za-z0-9._-]{1,64}`). One radio network per server for now; others
+  are logged and ignored.
+- Limits: 4 KB per message, 20 messages/s per observer with a burst of 100,
+  optional allowlist (`run -mqtt-allow`). `seq` gaps are counted per
+  observer; a seq of 1 is treated as an observer restart.
+- QoS 1 for `rx` and `status` (retained, also the last will), QoS 0 for `chan`.
+- Status carries `sw` (software) and `fw` (radio firmware) as well.
+- Credentials: username flag, password from a file (`-mqtt-pass-file`) or
+  `RRADMON_MQTT_PASSWORD`, never a flag or the URL. TLS (`ssl://`, `wss://`)
+  is verified. Bench broker: password in `secret/mqtt_password`.
+
+Verified on the bench: `rradmon observe -port COM32` → mosquitto →
+`rradmon run -mqtt …` stored announces, probes, link traffic and split
+packets as with a local RNode; two replay observers publishing the same
+capture at once produced 27 packets with 2 receptions each and no orphans.
+
 ## 6. Internal event (Go)
 
 Both sources emit the same value into the ingestor:

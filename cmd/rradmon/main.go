@@ -11,9 +11,10 @@ var version = "0.0.0-dev"
 const usage = `usage: rradmon <command> [flags]
 
 commands:
-  run       read an RNode and store what it hears in the database
+  run       read an RNode and/or MQTT observers and store what they hear
   import    store a capture file in the database
   serve     web UI for an existing database (no radio)
+  observe   read an RNode (or replay a capture) and publish to MQTT
   capture   read an RNode in promiscuous mode and save raw frames (JSON lines)
   decode    reassemble and parse a capture file
   ports     list serial ports
@@ -39,6 +40,8 @@ func main() {
 		err = runImport(os.Args[2:])
 	case "serve":
 		err = runServe(os.Args[2:])
+	case "observe":
+		err = runObserve(os.Args[2:])
 	case "version", "-version", "--version":
 		fmt.Println("rradmon", version)
 	case "help", "-h", "--help":

@@ -92,6 +92,19 @@ func (s *Store) Observer(extID, source string, t time.Time) (int64, error) {
 	return id, err
 }
 
+// ObserverStatus records an observer's reported status: it updates last_seen
+// and, when given, its position.
+func (s *Store) ObserverStatus(extID, source string, t time.Time, online bool, lat, lon *float64) error {
+	if _, err := s.Observer(extID, source, t); err != nil {
+		return err
+	}
+	if lat != nil && lon != nil {
+		_, err := s.DB.Exec(`UPDATE observers SET lat = ?, lon = ? WHERE ext_id = ?`, *lat, *lon, extID)
+		return err
+	}
+	return nil
+}
+
 // Settings with their defaults (spec §7).
 var defaultSettings = map[string]string{
 	"ingest.store_payloads":  "1",
