@@ -17,6 +17,21 @@ Reticulum LoRa radio monitor. Single Go binary, web UI embedded, SQLite store, M
 - RNode firmware fork: `C:\Users\vk2tr\Documents\AI\Claude\microReticulum_Firmware`
   — `Framing.h` KISS commands, `RNode_Firmware.ino` promiscuous receive path
 
+## Commands
+
+- `go test ./...` — unit tests plus bench-corpus tests in `testdata/`
+- `rradmon run -port COM32 -db bench.db [-for 3m]` — live ingest into SQLite
+- `rradmon capture -port COM32 [-for 5m]` — raw frames to `captures/` (git-ignored)
+- `rradmon decode|import <capture.jsonl>` — replay a capture
+
+## Bench rig (generating known traffic)
+
+- rnsd on this PC (shared instance, RNode on COM19) ↔ Rrptr on COM15; sniffer RNode (T3S3, 20 dB attenuated) on COM32.
+- Probe: `rnprobe rnstransport.probe 14db86ef43369aca88ac657156c9fc90` (`-s 300` forces a split packet).
+  Run via `python -m RNS.Utilities.rnprobe` with `PYTHONUNBUFFERED=1 PYTHONIOENCODING=utf-8` or the reply line is lost.
+- Links: `rnstatus -R 135a9914ef8e82c36ea3c82bd4689e02 -i secret/test_identity` (secret/ is git-ignored).
+- Announces: send `an\r\n` to COM15 at 115200 (Rrptr CLI).
+
 ## Rules
 
 - Never store encrypted payloads; metadata only (spec §7).
