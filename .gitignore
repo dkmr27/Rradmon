@@ -1,7 +1,9 @@
 /rradmon
 /rradmon.exe
+/rradmon-*.exe
 /dist/
 *.db
 *.db-wal
 *.db-shm
 /captures/
+/secret/

@@ -12,6 +12,7 @@ const usage = `usage: rradmon <command> [flags]
 
 commands:
   capture   read an RNode in promiscuous mode and save raw frames (JSON lines)
+  decode    reassemble and parse a capture file
   ports     list serial ports
   version   print version
 `
@@ -27,6 +28,8 @@ func main() {
 		err = runCapture(os.Args[2:])
 	case "ports":
 		err = runPorts()
+	case "decode":
+		err = runDecode(os.Args[2:])
 	case "version", "-version", "--version":
 		fmt.Println("rradmon", version)
 	case "help", "-h", "--help":

@@ -151,6 +151,17 @@ The random hash is 5 random bytes + a 5-byte big-endian Unix timestamp (seconds)
 of when the announce was made. That gives announce age at reception, which
 measures how long relays queued it. It depends on the announcing node's clock,
 so treat it as an estimate and ignore values in the future or > 1 day old.
+microReticulum nodes without a real-time clock (e.g. Rrptr) put a node-relative
+seconds counter there instead (seen: `0x0000001238`); Rradmon treats any value
+outside a plausible Unix-time range as unknown. Relay queueing delay is still
+measurable as the gap between the original (hops 0) and the relayed copy: on
+the bench rig rnsd rebroadcast three announces 1.5 s, 21 s and 41 s after the
+originals, which is its announce cap at work.
+
+Verified on the bench corpus (`testdata/rig-corpus1.jsonl`): all 7 proofs
+match the truncated hash of an earlier packet (probes, split probes and link
+requests), link traffic is addressed to the link request's truncated hash, all
+6 announces validate, and relayed announces keep the original's packet hash.
 
 ## 4. Packet identity (dedupe) — proposed
 
