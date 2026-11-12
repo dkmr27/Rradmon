@@ -1,0 +1,7 @@
+/rradmon
+/rradmon.exe
+/dist/
+*.db
+*.db-wal
+*.db-shm
+/captures/*.local.*
