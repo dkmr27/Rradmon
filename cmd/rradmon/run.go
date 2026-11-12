@@ -34,6 +34,7 @@ func runRun(args []string) error {
 	promisc := fs.Bool("promisc", true, "raw frames (promiscuous); false = whole packets")
 	quiet := fs.Bool("quiet", false, "do not print each packet")
 	dur := fs.Duration("for", 0, "stop after this long (0 = until Ctrl+C)")
+	httpAddr := fs.String("http", "127.0.0.1:8080", "web UI address (empty to disable)")
 	fs.Parse(args)
 	if *port == "" {
 		fs.Usage()
@@ -51,8 +52,18 @@ func runRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	if !*quiet {
-		in.OnEvent = func(ev ingest.Event) { fmt.Println(describeEvent(ev)) }
+	ws, shutdown, err := startHTTP(*httpAddr, st, log)
+	if err != nil {
+		return err
+	}
+	defer shutdown()
+	in.OnEvent = func(ev ingest.Event) {
+		if !*quiet {
+			fmt.Println(describeEvent(ev))
+		}
+		if ws != nil {
+			ws.Notify(ev.T)
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -123,6 +134,9 @@ func runRun(args []string) error {
 					AirtimeLong: e.AirtimeLong, UtilShort: e.UtilShort, UtilLong: e.UtilLong,
 					RSSI: e.RSSI, NoiseFloor: e.NoiseFloor, Interference: e.Interference}); err != nil {
 					return err
+				}
+				if ws != nil {
+					ws.Notify(e.T)
 				}
 			case rnode.DeviceError:
 				log.Warn("device error", "text", e.Text)

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rradmon</title>
+<link rel="stylesheet" href="app.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='3' fill='%232a78d6'/%3E%3Cpath d='M3 3a7 7 0 0 0 0 10M13 3a7 7 0 0 1 0 10' stroke='%232a78d6' stroke-width='1.6' fill='none'/%3E%3C/svg%3E">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="live-dot" id="liveDot" title="Live updates"></span>Rradmon</div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="live" aria-selected="true">Live</button>
+    <button role="tab" data-tab="nodes">Nodes</button>
+    <button role="tab" data-tab="channel">Channel</button>
+  </nav>
+  <button class="theme" id="themeBtn" title="Toggle light/dark">◐</button>
+</header>
+
+<section class="stats" id="stats"></section>
+
+<main>
+  <section id="tab-live" class="tab">
+    <div class="toolbar">
+      <div class="chips" id="typeFilter">
+        <label><input type="checkbox" value="DATA" checked> Data</label>
+        <label><input type="checkbox" value="ANNOUNCE" checked> Announce</label>
+        <label><input type="checkbox" value="LINKREQUEST" checked> Link request</label>
+        <label><input type="checkbox" value="PROOF" checked> Proof</label>
+        <label><input type="checkbox" value="orphan" checked> Orphans</label>
+      </div>
+      <button id="pauseBtn" class="btn">Pause</button>
+    </div>
+    <div class="table-wrap">
+      <table class="feed">
+        <thead><tr>
+          <th>Time</th><th>Type</th><th>Destination</th><th class="num">Hops</th>
+          <th>From</th><th class="num">RSSI</th><th class="num">SNR</th><th class="num" title="Reticulum payload bytes after the header">Payload</th><th>Notes</th>
+        </tr></thead>
+        <tbody id="feedBody"></tbody>
+      </table>
+    </div>
+    <div class="more"><button id="olderBtn" class="btn">Load older</button></div>
+  </section>
+
+  <section id="tab-nodes" class="tab" hidden>
+    <div class="toolbar">
+      <input id="nodeSearch" type="search" placeholder="Search name, identity or destination hash" autocomplete="off">
+    </div>
+    <div class="split">
+      <div class="table-wrap">
+        <table class="nodes">
+          <thead><tr>
+            <th>Node</th><th>Apps</th><th>Last heard</th><th class="num">Last RSSI</th><th class="num">Last SNR</th>
+            <th class="num">24 h RSSI</th><th class="num">Announces</th><th class="num">Hops</th>
+          </tr></thead>
+          <tbody id="nodesBody"></tbody>
+        </table>
+        <p class="empty" id="nodesEmpty" hidden>No nodes yet. Nodes appear when they announce, or when their packets can be attributed.</p>
+      </div>
+      <aside id="nodeDetail" class="detail" hidden></aside>
+    </div>
+  </section>
+
+  <section id="tab-channel" class="tab" hidden>
+    <div class="toolbar">
+      <select id="obsSelect"></select>
+      <div class="seg" id="chanRange">
+        <button data-h="1" aria-pressed="true">1 h</button>
+        <button data-h="6">6 h</button>
+        <button data-h="24">24 h</button>
+        <button data-h="168">7 d</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Channel utilisation (%)</h3>
+      <div class="chart" id="utilChart"></div>
+    </div>
+    <div class="card">
+      <h3>Noise floor (dBm)</h3>
+      <div class="chart" id="noiseChart"></div>
+    </div>
+  </section>
+</main>
+
+<div class="tip" id="tip" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -13,7 +13,8 @@ const usage = `usage: rradmon <command> [flags]
 commands:
   run       read an RNode and store what it hears in the database
   import    store a capture file in the database
-  capture  read an RNode in promiscuous mode and save raw frames (JSON lines)
+  serve     web UI for an existing database (no radio)
+  capture   read an RNode in promiscuous mode and save raw frames (JSON lines)
   decode    reassemble and parse a capture file
   ports     list serial ports
   version   print version
@@ -36,6 +37,8 @@ func main() {
 		err = runRun(os.Args[2:])
 	case "import":
 		err = runImport(os.Args[2:])
+	case "serve":
+		err = runServe(os.Args[2:])
 	case "version", "-version", "--version":
 		fmt.Println("rradmon", version)
 	case "help", "-h", "--help":

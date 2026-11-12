@@ -1,0 +1,426 @@
+"use strict";
+// Rradmon UI. Plain JS, no dependencies; talks to /api/* and /api/stream.
+
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const short = (h, n = 8) => (h ? h.slice(0, n) : "");
+const ms = (t) => new Date(t).getTime();
+const pad = (n) => String(n).padStart(2, "0");
+const clock = (t) => { const d = new Date(t); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+const num = (v, d = 1) => (v == null ? "–" : Number(v).toFixed(d));
+function ago(t) {
+  const s = Math.max(0, (Date.now() - ms(t)) / 1000);
+  if (s < 60) return `${Math.round(s)} s ago`;
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${(s / 3600).toFixed(1)} h ago`;
+  return `${(s / 86400).toFixed(1)} d ago`;
+}
+function dur(msv) {
+  if (msv < 1000) return `${msv} ms`;
+  if (msv < 60000) return `${(msv / 1000).toFixed(1)} s`;
+  return `${Math.floor(msv / 60000)} min ${Math.round((msv % 60000) / 1000)} s`;
+}
+async function api(path) {
+  const r = await fetch(path, { headers: { Accept: "application/json" } });
+  if (!r.ok) throw new Error(`${path}: ${r.status}`);
+  return r.json();
+}
+function store(key, val) { try { if (val === undefined) return localStorage.getItem(key); localStorage.setItem(key, val); } catch { return null; } }
+
+// ---------- theme ----------
+(function theme() {
+  const saved = store("rradmon.theme");
+  if (saved) document.documentElement.dataset.theme = saved;
+  $("#themeBtn").onclick = () => {
+    const dark = document.documentElement.dataset.theme
+      ? document.documentElement.dataset.theme === "dark"
+      : matchMedia("(prefers-color-scheme: dark)").matches;
+    document.documentElement.dataset.theme = dark ? "light" : "dark";
+    store("rradmon.theme", document.documentElement.dataset.theme);
+    redrawCharts();
+  };
+})();
+
+// ---------- tabs ----------
+let currentTab = "live";
+function showTab(name) {
+  currentTab = name;
+  $$(".tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === name));
+  $$(".tab").forEach((s) => (s.hidden = s.id !== `tab-${name}`));
+  if (name === "nodes") loadNodes();
+  if (name === "channel") loadChannel();
+  store("rradmon.tab", name);
+}
+$$(".tabs button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+
+// ---------- stats strip ----------
+let observers = [];
+async function loadSummary() {
+  const s = await api("/api/summary");
+  observers = s.observers || [];
+  const obs = observers[0];
+  const stat = (k, v, sub = "") => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div><div class="sub">${sub}</div></div>`;
+  $("#stats").innerHTML =
+    stat("Packets, last hour", s.packets_1h, `${s.packets} stored`) +
+    stat("Nodes", s.nodes, `${s.destinations} destinations`) +
+    stat("Orphaned halves, last hour", s.orphans_1h, "split packets heard incomplete") +
+    (obs
+      ? stat("Channel utilisation", obs.util_s == null ? "–" : `${num(obs.util_s)} %`, `long-term ${num(obs.util_l, 2)} % · ${esc(obs.ext_id)}`) +
+        stat("Noise floor", obs.noise_floor == null ? "–" : `${num(obs.noise_floor, 0)} dBm`, `observer last heard ${ago(obs.last_seen)}`)
+      : "");
+  const sel = $("#obsSelect");
+  if (sel.options.length !== observers.length) {
+    sel.innerHTML = observers.map((o) => `<option value="${o.id}">${esc(o.ext_id)}</option>`).join("");
+  }
+}
+
+// ---------- live feed ----------
+const feed = { rows: new Map(), newest: 0, oldest: Infinity, paused: false };
+const MAX_ROWS = 600;
+
+function typeFilter() { return new Set($$("#typeFilter input:checked").map((i) => i.value)); }
+
+function destCell(r) {
+  if (r.kind === "orphan") return `<span class="muted">${esc(r.orphan_kind)}</span>`;
+  const label = r.dest_name || r.app_name;
+  return `<span class="mono">${short(r.dest, 12)}</span>${label ? ` <span class="muted">${esc(label)}</span>` : ""} <span class="muted">${esc(r.dest_type)}</span>`;
+}
+function notes(r) {
+  const t = [];
+  if (r.frames === 2) t.push(`<span class="tag">split</span>`);
+  if (r.partial) t.push(`<span class="tag warn">partial: ${r.partial === 1 ? "first" : "second"} half only</span>`);
+  if (r.kind === "orphan") t.push(`<span class="tag bad">no matching packet</span>`);
+  if (r.delay_ms) t.push(`again after ${dur(r.delay_ms)}`);
+  if (r.repeat) t.push(`<span class="tag">repeat</span>`);
+  if (r.via) t.push(`via <span class="mono">${short(r.via)}</span>`);
+  return t.join(" ");
+}
+function feedRow(r) {
+  const tr = document.createElement("tr");
+  tr.dataset.key = `${r.kind}:${r.id}`;
+  tr.dataset.type = r.kind === "orphan" ? "orphan" : r.type;
+  const from = r.tx ? `<a class="node" href="#node=${r.tx}">${esc(r.tx_name) || `<span class="mono">${short(r.tx)}</span>`}</a>` : "";
+  tr.innerHTML = `<td class="mono">${clock(r.t)}</td>
+    <td><span class="type ${r.kind === "orphan" ? "orphan" : r.type}">${r.kind === "orphan" ? "ORPHAN" : r.type}</span></td>
+    <td>${destCell(r)}</td>
+    <td class="num">${r.hops ?? "–"}</td>
+    <td>${from}</td>
+    <td class="num">${num(r.rssi, 0)}</td>
+    <td class="num">${num(r.snr, 2)}</td>
+    <td class="num">${r.len}</td>
+    <td class="notes">${notes(r)}</td>`;
+  return tr;
+}
+function applyFilter() {
+  const f = typeFilter();
+  $$("#feedBody tr").forEach((tr) => (tr.hidden = !f.has(tr.dataset.type)));
+}
+function addRows(rows, { atTop, flash }) {
+  const body = $("#feedBody");
+  const f = typeFilter();
+  const frag = document.createDocumentFragment();
+  for (const r of rows) {
+    const key = `${r.kind}:${r.id}`;
+    if (feed.rows.has(key)) continue;
+    feed.rows.set(key, r);
+    const tr = feedRow(r);
+    tr.hidden = !f.has(tr.dataset.type);
+    if (flash) tr.classList.add("new");
+    atTop ? frag.prepend(tr) : frag.append(tr);
+    feed.newest = Math.max(feed.newest, ms(r.t));
+    feed.oldest = Math.min(feed.oldest, ms(r.t));
+  }
+  atTop ? body.prepend(frag) : body.append(frag);
+  while (body.rows.length > MAX_ROWS && atTop) {
+    const last = body.rows[body.rows.length - 1];
+    feed.rows.delete(last.dataset.key);
+    last.remove();
+    feed.oldest = feed.rows.size ? Math.min(...[...feed.rows.values()].map((r) => ms(r.t))) : Infinity;
+  }
+}
+async function loadFeed() {
+  const rows = await api("/api/feed?limit=150");
+  addRows(rows, { atTop: false, flash: false });
+}
+async function catchUp() {
+  if (feed.paused) return;
+  // 1 ms overlap: rows sharing the newest timestamp are de-duplicated by key.
+  const rows = await api(`/api/feed?after=${feed.newest - 1}&limit=500`);
+  addRows(rows, { atTop: true, flash: true });
+}
+$("#olderBtn").onclick = async () => {
+  if (!isFinite(feed.oldest)) return;
+  const rows = await api(`/api/feed?before=${feed.oldest}&limit=150`);
+  addRows(rows, { atTop: false, flash: false });
+  if (!rows.length) $("#olderBtn").disabled = true;
+};
+$("#pauseBtn").onclick = () => {
+  feed.paused = !feed.paused;
+  $("#pauseBtn").textContent = feed.paused ? "Resume" : "Pause";
+  $("#liveDot").classList.toggle("paused", feed.paused);
+  if (!feed.paused) catchUp();
+};
+$("#typeFilter").onchange = applyFilter;
+
+// ---------- live stream ----------
+let lastNodesRefresh = 0;
+function connect() {
+  const es = new EventSource("/api/stream");
+  es.onopen = () => { $("#liveDot").classList.add("on"); catchUp(); };
+  es.onerror = () => $("#liveDot").classList.remove("on");
+  es.addEventListener("data", () => {
+    catchUp().catch(console.error);
+    throttledRefresh();
+  });
+}
+let refreshTimer = null;
+function throttledRefresh() {
+  if (refreshTimer) return;
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
+    loadSummary().catch(console.error);
+    if (currentTab === "nodes" && Date.now() - lastNodesRefresh > 5000) loadNodes();
+    if (currentTab === "channel") loadChannel();
+  }, 2000);
+}
+
+// ---------- nodes ----------
+let selectedNode = null;
+async function loadNodes() {
+  lastNodesRefresh = Date.now();
+  const q = $("#nodeSearch").value;
+  const rows = await api(`/api/nodes?q=${encodeURIComponent(q)}`);
+  $("#nodesEmpty").hidden = rows.length > 0;
+  $("#nodesBody").innerHTML = rows
+    .map((n) => {
+      const name = n.name ? esc(n.name) : `<span class="mono">${short(n.identity, 12)}</span>`;
+      const apps = (n.apps || []).map((a) => `<span class="tag">${esc(a.replace(/^rnstransport\./, ""))}</span>`).join("");
+      return `<tr data-id="${n.identity}" class="${n.identity === selectedNode ? "sel" : ""}">
+        <td>${name}<div class="muted mono">${short(n.identity, 16)}</div></td>
+        <td>${apps || '<span class="muted">relay only</span>'}</td>
+        <td title="${new Date(n.last_seen).toLocaleString()}">${ago(n.last_seen)}</td>
+        <td class="num">${num(n.last_rssi, 0)}</td>
+        <td class="num">${num(n.last_snr, 2)}</td>
+        <td class="num">${num(n.avg_rssi_24h, 0)}</td>
+        <td class="num">${n.announces}</td>
+        <td class="num">${n.min_hops ?? "–"}</td></tr>`;
+    })
+    .join("");
+  $$("#nodesBody tr").forEach((tr) => (tr.onclick = () => openNode(tr.dataset.id)));
+  if (selectedNode) loadNodeDetail(selectedNode, false);
+}
+let searchTimer;
+$("#nodeSearch").oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadNodes, 200); };
+
+function openNode(id) {
+  if (location.hash !== `#node=${id}`) history.replaceState(null, "", `#node=${id}`);
+  selectedNode = id;
+  if (currentTab !== "nodes") showTab("nodes");
+  $$("#nodesBody tr").forEach((tr) => tr.classList.toggle("sel", tr.dataset.id === id));
+  loadNodeDetail(id, true);
+}
+const nodeCharts = {};
+async function loadNodeDetail(id, scroll) {
+  let d;
+  try { d = await api(`/api/nodes/${id}`); } catch { return; }
+  if (selectedNode !== id) return;
+  const el = $("#nodeDetail");
+  el.hidden = false;
+  $(".split").classList.add("open");
+  const title = d.name ? esc(d.name) : "Unnamed node";
+  const kv = (k, v) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  el.innerHTML = `<button class="btn close" id="closeNode">Close</button>
+    <h2>${title}</h2>
+    <div class="mono muted">${d.identity}</div>
+    <div class="kv">
+      ${kv("Last heard", ago(d.last_seen))}
+      ${kv("Last RSSI / SNR", `${num(d.last_rssi, 0)} dBm / ${num(d.last_snr, 2)} dB`)}
+      ${kv("Receptions attributed", d.heard_direct)}
+      ${kv("Announces", d.announces)}
+      ${kv("Fewest hops", d.min_hops ?? "–")}
+      ${kv("Announces relayed", d.relayed)}
+    </div>
+    <h3>Signal from this node (last 7 days)</h3>
+    <div class="chart" id="rssiChart"></div>
+    <div class="chart" id="snrChart"></div>
+    <h3>Destinations</h3>
+    <div class="table-wrap"><table><thead><tr><th>Hash</th><th>App</th><th>Name</th><th class="num">Announces</th><th class="num">Hops</th><th>Last seen</th></tr></thead>
+    <tbody>${(d.dests || []).map((x) => `<tr><td class="mono">${short(x.hash, 16)}</td><td>${esc(x.app)}</td><td>${esc(x.name)}</td>
+      <td class="num">${x.announces}</td><td class="num">${x.last_hops ?? "–"}</td><td>${ago(x.last_seen)}</td></tr>`).join("") ||
+      '<tr><td colspan="6" class="muted">Seen only as a relay (its transport ID); it has not announced a destination here.</td></tr>'}</tbody></table></div>
+    <h3>Announce history</h3>
+    <div class="table-wrap"><table><thead><tr><th>Time</th><th>App</th><th class="num">Hops</th><th>Signature</th><th class="num">Copies heard</th><th class="num">Last relay after</th></tr></thead>
+    <tbody>${(d.announce_history || []).map((a) => `<tr><td>${new Date(a.t).toLocaleString()}</td><td>${esc(a.app.replace(/^rnstransport\./, ""))}</td>
+      <td class="num">${a.hops}</td><td>${a.valid === "valid" ? "valid" : `<span class="tag bad">${esc(a.valid)}</span>`}</td>
+      <td class="num">${a.copies}</td><td class="num">${a.copies > 1 ? dur(a.max_delay) : "–"}</td></tr>`).join("") ||
+      '<tr><td colspan="6" class="muted">No announces from this identity.</td></tr>'}</tbody></table></div>`;
+  $("#closeNode").onclick = () => {
+    selectedNode = null;
+    el.hidden = true;
+    $(".split").classList.remove("open");
+    $$("#nodesBody tr").forEach((tr) => tr.classList.remove("sel"));
+    history.replaceState(null, "", location.pathname);
+  };
+  const sig = d.signal || [];
+  nodeCharts.rssi = { el: "#rssiChart", opts: { title: "RSSI", unit: "dBm", mode: "dot", minSpan: 10, series: [{ name: "RSSI", color: "--s1", pts: sig.map((p) => ({ t: ms(p.t), v: p.rssi, note: p.type })) }] } };
+  nodeCharts.snr = { el: "#snrChart", opts: { title: "SNR", unit: "dB", mode: "dot", minSpan: 5, series: [{ name: "SNR", color: "--s1", pts: sig.map((p) => ({ t: ms(p.t), v: p.snr, note: p.type })) }] } };
+  drawChart(nodeCharts.rssi);
+  drawChart(nodeCharts.snr);
+  if (scroll && innerWidth < 900) el.scrollIntoView({ behavior: "smooth" });
+}
+
+// ---------- channel ----------
+let chanHours = Number(store("rradmon.chanHours")) || 1;
+const chanCharts = {};
+$$("#chanRange button").forEach((b) => {
+  b.setAttribute("aria-pressed", Number(b.dataset.h) === chanHours);
+  b.onclick = () => {
+    chanHours = Number(b.dataset.h);
+    store("rradmon.chanHours", chanHours);
+    $$("#chanRange button").forEach((x) => x.setAttribute("aria-pressed", x === b));
+    loadChannel();
+  };
+});
+$("#obsSelect").onchange = loadChannel;
+async function loadChannel() {
+  const id = $("#obsSelect").value || (observers[0] && observers[0].id);
+  if (!id) return;
+  const pts = await api(`/api/channel/${id}?hours=${chanHours}`);
+  const now = Date.now();
+  const domain = [now - chanHours * 3600e3, now];
+  chanCharts.util = { el: "#utilChart", opts: { title: "Utilisation", unit: "%", mode: "line", yMin: 0, minSpan: 5, domain, series: [
+    { name: "Short-term", color: "--s1", pts: pts.map((p) => ({ t: ms(p.t), v: p.util_s })) },
+    { name: "Long-term", color: "--s2", pts: pts.map((p) => ({ t: ms(p.t), v: p.util_l })) },
+  ] } };
+  chanCharts.noise = { el: "#noiseChart", opts: { unit: "dBm", mode: "line", minSpan: 10, domain, series: [
+    { name: "Noise floor", color: "--s1", pts: pts.map((p) => ({ t: ms(p.t), v: p.noise_floor })) },
+  ] } };
+  drawChart(chanCharts.util);
+  drawChart(chanCharts.noise);
+}
+
+function redrawCharts() {
+  Object.values(nodeCharts).concat(Object.values(chanCharts)).forEach((c) => { if ($(c.el)) drawChart(c); });
+}
+let resizeTimer;
+addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(redrawCharts, 150); });
+
+// ---------- chart ----------
+// One y-axis, time on x. mode "line" (gaps where data stops) or "dot".
+function niceTicks(lo, hi, n = 4) {
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const raw = (hi - lo) / n;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw);
+  const start = Math.floor(lo / step) * step;
+  const ticks = [];
+  for (let v = start; v <= hi + step * 1e-9; v += step) ticks.push(+v.toFixed(10));
+  if (ticks[ticks.length - 1] < hi) ticks.push(ticks[ticks.length - 1] + step);
+  return ticks;
+}
+function timeTicks(t0, t1) {
+  const span = t1 - t0;
+  const steps = [60e3, 300e3, 600e3, 1800e3, 3600e3, 3 * 3600e3, 6 * 3600e3, 12 * 3600e3, 86400e3];
+  const step = steps.find((s) => span / s <= 6) || 86400e3;
+  const off = new Date().getTimezoneOffset() * 60e3;
+  const ticks = [];
+  for (let t = Math.ceil((t0 - off) / step) * step + off; t <= t1; t += step) ticks.push(t);
+  const fmt = (t) => {
+    const d = new Date(t);
+    return step >= 86400e3 ? `${d.getDate()}/${d.getMonth() + 1}` : `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  return ticks.map((t) => ({ t, label: fmt(t) }));
+}
+function drawChart({ el, opts }) {
+  const host = $(el);
+  if (!host) return;
+  const all = opts.series.flatMap((s) => s.pts.filter((p) => p.v != null));
+  const legend = opts.series.length > 1
+    ? `<div class="legend">${opts.series.map((s) => `<span style="--c:var(${s.color})">${esc(s.name)}</span>`).join("")}</div>`
+    : opts.title ? `<div class="legend"><span style="--c:var(${opts.series[0].color})">${esc(opts.title)} (${esc(opts.unit)})</span></div>` : "";
+  if (!all.length) { host.innerHTML = legend + `<div class="nodata">No data in this range yet.</div>`; return; }
+
+  const W = Math.max(280, host.clientWidth), H = 170, m = { l: 46, r: 12, t: 8, b: 22 };
+  const [t0, t1] = opts.domain || [Math.min(...all.map((p) => p.t)), Math.max(...all.map((p) => p.t))];
+  const pad5 = (t1 - t0) * 0.03 || 60e3;
+  const x0 = opts.domain ? t0 : t0 - pad5, x1 = opts.domain ? t1 : t1 + pad5;
+  let lo = Math.min(...all.map((p) => p.v)), hi = Math.max(...all.map((p) => p.v));
+  if (opts.yMin != null) lo = Math.min(lo, opts.yMin);
+  if (opts.minSpan && hi - lo < opts.minSpan) {
+    // Keep small changes from looking dramatic: centre a minimum span.
+    const mid = (hi + lo) / 2;
+    lo = mid - opts.minSpan / 2;
+    hi = mid + opts.minSpan / 2;
+    if (opts.yMin != null && lo < opts.yMin) { hi += opts.yMin - lo; lo = opts.yMin; }
+  }
+  const yt = niceTicks(lo, hi);
+  const y0 = yt[0], y1 = yt[yt.length - 1];
+  const X = (t) => m.l + ((t - x0) / (x1 - x0)) * (W - m.l - m.r);
+  const Y = (v) => H - m.b - ((v - y0) / (y1 - y0 || 1)) * (H - m.t - m.b);
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.title || opts.series.map((s) => s.name).join(", "))}">`;
+  svg += `<g class="grid">${yt.map((v) => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v)}" y2="${Y(v)}"/>`).join("")}</g>`;
+  svg += `<g class="axis">${yt.map((v) => `<text x="${m.l - 6}" y="${Y(v) + 4}" text-anchor="end">${v}</text>`).join("")}`;
+  svg += timeTicks(x0, x1).map((k) => `<text x="${X(k.t)}" y="${H - 6}" text-anchor="middle">${k.label}</text>`).join("");
+  svg += `</g>`;
+
+  for (const s of opts.series) {
+    const pts = s.pts.filter((p) => p.v != null).sort((a, b) => a.t - b.t);
+    if (opts.mode === "line") {
+      // Break the line where reports stop for more than 5x the usual spacing.
+      const gaps = pts.slice(1).map((p, i) => p.t - pts[i].t).sort((a, b) => a - b);
+      const typical = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 0;
+      let d = "";
+      pts.forEach((p, i) => {
+        const brk = i === 0 || p.t - pts[i - 1].t > Math.max(typical * 5, 10e3);
+        d += `${brk ? "M" : "L"}${X(p.t).toFixed(1)},${Y(p.v).toFixed(1)}`;
+      });
+      svg += `<path d="${d}" fill="none" style="stroke:var(${s.color})" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    } else {
+      svg += pts.map((p) => `<circle cx="${X(p.t).toFixed(1)}" cy="${Y(p.v).toFixed(1)}" r="4" style="fill:var(${s.color});stroke:var(--surface)" stroke-width="2"/>`).join("");
+    }
+  }
+  svg += `<line class="xh" x1="0" x2="0" y1="${m.t}" y2="${H - m.b}" style="stroke:var(--text-3)" stroke-width="1" visibility="hidden"/>`;
+  svg += `<rect x="${m.l}" y="${m.t}" width="${W - m.l - m.r}" height="${H - m.t - m.b}" fill="transparent"/></svg>`;
+  host.innerHTML = legend + svg;
+
+  // Hover: nearest point in time (lines) or in distance (dots).
+  const svgEl = $("svg", host), xh = $(".xh", host), tip = $("#tip");
+  const flat = opts.series.flatMap((s) => s.pts.filter((p) => p.v != null).map((p) => ({ ...p, s })));
+  svgEl.onmousemove = (e) => {
+    const r = svgEl.getBoundingClientRect();
+    const k = W / r.width;
+    const mx = (e.clientX - r.left) * k, my = (e.clientY - r.top) * k;
+    let best = null, bd = Infinity;
+    for (const p of flat) {
+      const d = opts.mode === "line" ? Math.abs(X(p.t) - mx) : Math.hypot(X(p.t) - mx, Y(p.v) - my);
+      if (d < bd) { bd = d; best = p; }
+    }
+    if (!best || bd > (opts.mode === "line" ? 40 : 24)) { tip.hidden = true; xh.setAttribute("visibility", "hidden"); return; }
+    xh.setAttribute("x1", X(best.t)); xh.setAttribute("x2", X(best.t)); xh.setAttribute("visibility", "visible");
+    const same = opts.mode === "line" ? flat.filter((p) => p.t === best.t) : [best];
+    tip.innerHTML = `<div class="muted">${new Date(best.t).toLocaleString()}</div>` +
+      same.map((p) => `<div><span class="sw" style="background:var(${p.s.color})"></span>${esc(p.s.name)} <b>${num(p.v, opts.unit === "dB" || opts.unit === "%" ? 2 : 0)} ${esc(opts.unit)}</b>${p.note ? ` <span class="muted">${esc(p.note)}</span>` : ""}</div>`).join("");
+    tip.hidden = false;
+    const tx = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8);
+    tip.style.left = `${tx}px`;
+    tip.style.top = `${e.clientY + 14}px`;
+  };
+  svgEl.onmouseleave = () => { tip.hidden = true; xh.setAttribute("visibility", "hidden"); };
+}
+
+// ---------- start ----------
+addEventListener("hashchange", () => {
+  const m = location.hash.match(/^#node=([0-9a-f]{32})$/);
+  if (m) openNode(m[1]);
+});
+(async function start() {
+  await loadSummary().catch(console.error);
+  await loadFeed().catch(console.error);
+  const m = location.hash.match(/^#node=([0-9a-f]{32})$/);
+  if (m) openNode(m[1]);
+  else showTab(store("rradmon.tab") || "live");
+  connect();
+  setInterval(() => loadSummary().catch(console.error), 30000);
+})();
