@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,7 +36,13 @@ type ObserverRow struct {
 	UtilShort  *float64  `json:"util_s"`
 	UtilLong   *float64  `json:"util_l"`
 	NoiseFloor *float64  `json:"noise_floor"`
+	// Local: an RNode attached to this server ("us"), rather than a remote
+	// observer reporting over MQTT
+	Local bool `json:"local"`
 }
+
+// LocalSource is the source of observers attached to this server.
+const LocalSource = "rnode-serial"
 
 func (s *Store) Summary(now time.Time) (Summary, error) {
 	var sm Summary
@@ -58,7 +65,7 @@ func (s *Store) Summary(now time.Time) (Summary, error) {
 		FROM observers o
 		LEFT JOIN channel_stats c ON c.rowid = (SELECT rowid FROM channel_stats
 			WHERE observer_id = o.id ORDER BY t DESC LIMIT 1)
-		ORDER BY o.last_seen DESC`)
+		ORDER BY o.source = 'rnode-serial' DESC, o.ext_id`)
 	if err != nil {
 		return sm, err
 	}
@@ -69,6 +76,7 @@ func (s *Store) Summary(now time.Time) (Summary, error) {
 		if err := rows.Scan(&o.ID, &o.ExtID, &o.Source, &last, &o.UtilShort, &o.UtilLong, &o.NoiseFloor); err != nil {
 			return sm, err
 		}
+		o.Local = o.Source == LocalSource
 		o.LastSeen = fromMs(last)
 		sm.Observers = append(sm.Observers, o)
 	}
@@ -324,6 +332,9 @@ type HourCount struct {
 // ObserverSignal summarises one observer's receptions of a node.
 type ObserverSignal struct {
 	Observer string    `json:"observer"`
+	Local    bool      `json:"local"`
+	LastRSSI *float64  `json:"last_rssi"`
+	LastSNR  *float64  `json:"last_snr"`
 	Count    int64     `json:"count"`
 	RSSIAvg  float64   `json:"rssi_avg"`
 	RSSIMin  float64   `json:"rssi_min"`
@@ -503,10 +514,13 @@ func (s *Store) Node(identHex string, now time.Time) (*NodeDetail, error) {
 	}
 
 	// Per observer, last 24 h
-	rows, err = s.DB.Query(`SELECT o.ext_id, COUNT(*), AVG(r.rssi), MIN(r.rssi), MAX(r.rssi), AVG(r.snr), MIN(r.snr), MAX(r.t_rx)
+	rows, err = s.DB.Query(`SELECT o.ext_id, o.source = 'rnode-serial', COUNT(*), AVG(r.rssi), MIN(r.rssi), MAX(r.rssi),
+			AVG(r.snr), MIN(r.snr), MAX(r.t_rx),
+			(SELECT rssi FROM receptions x WHERE x.observer_id = o.id AND x.tx_identity = ?1 AND x.rssi IS NOT NULL ORDER BY x.t_rx DESC LIMIT 1),
+			(SELECT snr FROM receptions x WHERE x.observer_id = o.id AND x.tx_identity = ?1 AND x.rssi IS NOT NULL ORDER BY x.t_rx DESC LIMIT 1)
 		FROM receptions r JOIN observers o ON o.id = r.observer_id
-		WHERE r.tx_identity = ? AND r.rssi IS NOT NULL AND r.t_rx >= ?
-		GROUP BY o.ext_id ORDER BY COUNT(*) DESC`, ident, ms(now.Add(-24*time.Hour)))
+		WHERE r.tx_identity = ?1 AND r.rssi IS NOT NULL AND r.t_rx >= ?2
+		GROUP BY o.id ORDER BY o.source = 'rnode-serial' DESC, COUNT(*) DESC, o.ext_id`, ident, ms(now.Add(-24*time.Hour)))
 	if err != nil {
 		return nil, err
 	}
@@ -514,7 +528,8 @@ func (s *Store) Node(identHex string, now time.Time) (*NodeDetail, error) {
 	for rows.Next() {
 		var o ObserverSignal
 		var last int64
-		if err := rows.Scan(&o.Observer, &o.Count, &o.RSSIAvg, &o.RSSIMin, &o.RSSIMax, &o.SNRAvg, &o.SNRMin, &last); err != nil {
+		if err := rows.Scan(&o.Observer, &o.Local, &o.Count, &o.RSSIAvg, &o.RSSIMin, &o.RSSIMax, &o.SNRAvg, &o.SNRMin, &last,
+			&o.LastRSSI, &o.LastSNR); err != nil {
 			return nil, err
 		}
 		o.Last = fromMs(last)
@@ -601,6 +616,17 @@ type ObserverView struct {
 	UtilShort  *float64   `json:"util_s"`
 	UtilLong   *float64   `json:"util_l"`
 	NoiseFloor *float64   `json:"noise_floor"`
+
+	Local bool `json:"local"`
+	// Noise floor over the last 24 h in half-hour averages, oldest first
+	// (missing half-hours omitted), for a sparkline
+	Noise24h []SparkPoint `json:"noise_24h,omitempty"`
+}
+
+// SparkPoint is one value of a small time series.
+type SparkPoint struct {
+	T time.Time `json:"t"`
+	V float64   `json:"v"`
 }
 
 // SilentAfter is how long without data before an observer that claims to be
@@ -610,8 +636,8 @@ const SilentAfter = 3 * time.Minute
 // statusFields are the status-message fields shown on the page, when present.
 var statusFields = []string{"uptime_s", "rx_frames", "rx_errors", "mqtt_dropped", "battery_mv", "rssi_wifi"}
 
-// Observers lists every observer with its health figures, most recently
-// heard first.
+// Observers lists every observer with its health figures, in a stable
+// order: local first, then online, silent and offline, each by name.
 func (s *Store) Observers(now time.Time) ([]ObserverView, error) {
 	hour, day := ms(now.Add(-time.Hour)), ms(now.Add(-24*time.Hour))
 	rows, err := s.DB.Query(`
@@ -683,7 +709,53 @@ func (s *Store) Observers(now time.Time) ([]ObserverView, error) {
 				}
 			}
 		}
+		v.Local = v.Source == LocalSource
 		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	rank := map[string]int{"online": 0, "silent": 1, "offline": 2}
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.Local != b.Local {
+			return a.Local
+		}
+		if rank[a.State] != rank[b.State] {
+			return rank[a.State] < rank[b.State]
+		}
+		return a.ExtID < b.ExtID
+	})
+	for i := range out {
+		spark, err := s.noiseSpark(out[i].ID, now)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Noise24h = spark
+	}
+	return out, nil
+}
+
+// noiseSpark averages an observer's noise floor into half-hour buckets over
+// the last 24 h.
+func (s *Store) noiseSpark(observerID int64, now time.Time) ([]SparkPoint, error) {
+	const bucket = 30 * 60 * 1000
+	rows, err := s.DB.Query(`SELECT (t / ?1) * ?1, AVG(noise_floor) FROM channel_stats
+		WHERE observer_id = ?2 AND t >= ?3 AND noise_floor IS NOT NULL
+		GROUP BY t / ?1 ORDER BY 1`, bucket, observerID, ms(now.Add(-24*time.Hour)))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SparkPoint
+	for rows.Next() {
+		var t int64
+		var v float64
+		if err := rows.Scan(&t, &v); err != nil {
+			return nil, err
+		}
+		out = append(out, SparkPoint{T: fromMs(t), V: v})
 	}
 	return out, rows.Err()
 }

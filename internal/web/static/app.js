@@ -46,17 +46,17 @@ function store(key, val) { try { if (val === undefined) return localStorage.getI
 let currentTab = "live";
 function showTab(name) {
   currentTab = name;
-  const nav = name === "node" ? "nodes" : name;
+  const nav = name === "node" ? "nodes" : name === "observer" ? "observers" : name;
   $$(".tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === nav));
   $$(".tab").forEach((s) => (s.hidden = s.id !== `tab-${name}`));
   if (name === "nodes") loadNodes();
   if (name === "channel") loadChannel();
   if (name === "observers") loadObservers();
   if (name === "map") loadMap();
-  if (name !== "node") store("rradmon.tab", name);
+  if (name !== "node" && name !== "observer") store("rradmon.tab", name);
 }
 $$(".tabs button").forEach((b) => (b.onclick = () => {
-  if (location.hash.startsWith("#node=")) history.replaceState(null, "", location.pathname);
+  if (location.hash.startsWith("#node=") || location.hash.startsWith("#observer=")) history.replaceState(null, "", location.pathname);
   showTab(b.dataset.tab);
 }));
 
@@ -65,19 +65,21 @@ let observers = [];
 async function loadSummary() {
   const s = await api("/api/summary");
   observers = s.observers || [];
-  const obs = observers[0];
+  // Channel figures as heard by the local RNode (else the first observer)
+  const obs = observers.find((o) => o.local) || observers[0];
+  const heardBy = obs ? `as heard by ${esc(obs.ext_id)}${obs.local ? " (local)" : ""}` : "";
   const stat = (k, v, sub = "") => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div><div class="sub">${sub}</div></div>`;
   $("#stats").innerHTML =
     stat("Packets, last hour", s.packets_1h, `${s.packets} stored`) +
     stat("Nodes", s.nodes, `${s.destinations} destinations`) +
     stat("Orphaned halves, last hour", s.orphans_1h, "split packets heard incomplete") +
     (obs
-      ? stat("Channel utilisation", obs.util_s == null ? "–" : `${num(obs.util_s)} %`, `long-term ${num(obs.util_l, 2)} % · ${esc(obs.ext_id)}`) +
-        stat("Noise floor", obs.noise_floor == null ? "–" : `${num(obs.noise_floor, 0)} dBm`, `observer last heard ${ago(obs.last_seen)}`)
+      ? stat("Channel utilisation", obs.util_s == null ? "–" : `${num(obs.util_s)} %`, `long-term ${num(obs.util_l, 2)} % · ${heardBy}`) +
+        stat("Noise floor", obs.noise_floor == null ? "–" : `${num(obs.noise_floor, 0)} dBm`, heardBy)
       : "");
   const sel = $("#obsSelect");
   if (sel.options.length !== observers.length) {
-    sel.innerHTML = observers.map((o) => `<option value="${o.id}">${esc(o.ext_id)}</option>`).join("");
+    sel.innerHTML = observers.map((o) => `<option value="${o.id}">${esc(o.ext_id)}${o.local ? " (local)" : ""}</option>`).join("");
   }
 }
 
@@ -339,6 +341,7 @@ function throttledRefresh() {
     if (currentTab === "node" && currentNode && Date.now() - lastNodesRefresh > 5000) loadNodePage(currentNode);
     if (currentTab === "channel") loadChannel();
     if (currentTab === "observers") loadObservers();
+    if (currentTab === "observer" && currentObserver) { observerList = []; loadObserverPage(currentObserver); }
     if (currentTab === "map") loadMap();
   }, 2000);
 }
@@ -400,6 +403,10 @@ $("#nodeBack").onclick = () => {
 
 const nodeCharts = {};
 const OBS_COLORS = ["--s1", "--s2", "--s3"]; // categorical slots, fixed order
+let lastNodeData = null;
+// Which observer the node page's figures and charts are "as heard by":
+// an observer id, or "all". Remembered between visits.
+let heardBy = store("rradmon.heardBy") || "";
 async function loadNodePage(id) {
   let d;
   try { d = await api(`/api/nodes/${id}`); } catch {
@@ -408,14 +415,49 @@ async function loadNodePage(id) {
   }
   if (currentNode !== id) return;
   lastNodesRefresh = Date.now();
+  lastNodeData = d;
+  renderNodePage(d);
+}
+// Observers that heard this node, local first (as the API orders them),
+// then any only in the 7-day signal history
+function nodeObservers(d) {
+  const list = (d.per_observer || []).map((o) => ({ id: o.observer, local: o.local }));
+  for (const p of d.signal || []) if (!list.some((o) => o.id === p.observer)) list.push({ id: p.observer, local: false });
+  return list;
+}
+function pickHeardBy(d) {
+  const obs = nodeObservers(d);
+  if (heardBy === "all" || obs.some((o) => o.id === heardBy)) return heardBy;
+  return (obs.find((o) => o.local) || obs[0] || { id: "all" }).id;
+}
+function renderNodePage(d) {
+  const page = $("#nodePage");
   // A refresh rebuilds the page and its charts are drawn just after, so for a
   // moment it is shorter and the browser would move the scroll position. Hold
   // the old height while it rebuilds, then put the scroll position back.
-  const page = $("#nodePage");
-  const refresh = page.dataset.node === id;
+  const refresh = page.dataset.node === d.identity;
   const scrollY = window.scrollY;
   if (refresh) page.style.minHeight = `${page.offsetHeight}px`;
-  page.dataset.node = id;
+  page.dataset.node = d.identity;
+
+  const obs = nodeObservers(d);
+  const sel = pickHeardBy(d);
+  const row = (d.per_observer || []).find((o) => o.observer === sel);
+  const sig = d.signal || [];
+  // Figures as heard by the selected observer (or all of them)
+  let lastRSSI = d.last_rssi, lastSNR = d.last_snr, avgRSSI = d.avg_rssi_24h, avgSNR = d.avg_snr_24h, rx24 = null;
+  if (sel !== "all") {
+    const mine = sig.filter((p) => p.observer === sel);
+    const latest = mine[mine.length - 1];
+    lastRSSI = row ? row.last_rssi : latest ? latest.rssi : null;
+    lastSNR = row ? row.last_snr : latest ? latest.snr : null;
+    avgRSSI = row ? row.rssi_avg : null;
+    avgSNR = row ? row.snr_avg : null;
+    rx24 = row ? row.count : 0;
+  }
+  const label = (o) => `${esc(o.id)}${o.local ? " (local)" : ""}`;
+  const heard = sel === "all" ? "all observers" : label(obs.find((o) => o.id === sel) || { id: sel });
+
   const kv = (k, v, title = "") => `<div${title ? ` title="${esc(title)}"` : ""}><div class="k">${k}</div><div class="v">${v}</div></div>`;
   const placed = (d.dests || []).find((x) => x.lat != null);
   const apps = (d.apps || []).map((a) => `<span class="tag">${esc(a.replace(/^rnstransport\./, ""))}</span>`).join("");
@@ -427,28 +469,37 @@ async function loadNodePage(id) {
       ${placed ? `<div class="small">${num(placed.lat, 5)}, ${num(placed.lon, 5)}${placed.height != null ? ` · ${num(placed.height, 0)} m` : ""}
         <button class="link" data-map="1" data-lat="${placed.lat}" data-lon="${placed.lon}">show on map</button></div>` : ""}
     </header>
+    <div class="heard-by">
+      <label for="heardBy">As heard by</label>
+      <select id="heardBy">
+        ${obs.map((o) => `<option value="${esc(o.id)}"${o.id === sel ? " selected" : ""}>${label(o)}</option>`).join("")}
+        <option value="all"${sel === "all" ? " selected" : ""}>All observers</option>
+      </select>
+      <span class="muted small">Signal figures and charts below are from ${sel === "all" ? "every observer" : "this observer only"}.</span>
+    </div>
     <div class="kv kv4">
       ${kv("Last heard", ago(d.last_seen), new Date(d.last_seen).toLocaleString())}
-      ${kv("Last RSSI / SNR", `${num(d.last_rssi, 0)} dBm / ${num(d.last_snr, 2)} dB`)}
-      ${kv("24 h average", `${num(d.avg_rssi_24h, 0)} dBm / ${num(d.avg_snr_24h, 1)} dB`)}
+      ${kv(`Last RSSI / SNR`, `${num(lastRSSI, 0)} dBm / ${num(lastSNR, 2)} dB`, `As heard by ${sel === "all" ? "any observer" : sel}`)}
+      ${kv(`24 h average`, `${num(avgRSSI, 0)} dBm / ${num(avgSNR, 1)} dB`, `As heard by ${sel === "all" ? "all observers" : sel}`)}
       ${kv("Announces per hour", perHour(d.announces_24h), `${d.announces_24h} in the last 24 h`)}
       ${kv("Announces, all", d.announces)}
       ${kv("Fewest hops", d.min_hops ?? "–")}
-      ${kv("Receptions attributed", d.heard_direct)}
+      ${kv(sel === "all" ? "Receptions attributed" : "Receptions, 24 h", sel === "all" ? d.heard_direct : rx24)}
       ${kv("Announces relayed", d.relayed, "Other nodes' announces this one rebroadcast")}
     </div>
     <div class="node-grid">
       <section class="card"><h3>Announces per hour, last 24 h</h3><div class="chart" id="annChart"></div></section>
       <section class="card"><h3>How each observer hears it, last 24 h</h3>
-        <div class="table-wrap"><table><thead><tr><th>Observer</th><th class="num">Receptions</th>
+        <div class="table-wrap"><table class="per-obs"><thead><tr><th>Observer</th><th class="num">Receptions</th>
           <th class="num">RSSI avg</th><th class="num">min</th><th class="num">max</th><th class="num">SNR avg</th><th class="num">min</th><th>Last</th></tr></thead>
-        <tbody>${(d.per_observer || []).map((o) => `<tr><td>${esc(o.observer)}</td><td class="num">${o.count}</td>
+        <tbody>${(d.per_observer || []).map((o) => `<tr data-obs="${esc(o.observer)}" class="${o.observer === sel ? "sel" : ""}">
+          <td>${esc(o.observer)}${o.local ? ' <span class="tag">local</span>' : ""}</td><td class="num">${o.count}</td>
           <td class="num">${num(o.rssi_avg, 0)}</td><td class="num">${num(o.rssi_min, 0)}</td><td class="num">${num(o.rssi_max, 0)}</td>
           <td class="num">${num(o.snr_avg, 1)}</td><td class="num">${num(o.snr_min, 1)}</td><td>${ago(o.last)}</td></tr>`).join("") ||
           '<tr><td colspan="8" class="muted">Nothing attributed to this node in the last 24 h.</td></tr>'}</tbody></table></div>
       </section>
     </div>
-    <section class="card"><h3>Signal by observer, last 7 days</h3>
+    <section class="card"><h3>Signal as heard by ${heard}, last 7 days</h3>
       <div class="chart" id="rssiChart"></div>
       <div class="chart" id="snrChart"></div>
     </section>
@@ -463,7 +514,11 @@ async function loadNodePage(id) {
       <td class="num">${a.hops}</td><td>${a.valid === "valid" ? "valid" : `<span class="tag bad">${esc(a.valid)}</span>`}</td>
       <td class="num">${a.copies}</td><td class="num">${a.copies > 1 ? dur(a.max_delay) : "–"}</td></tr>`).join("") ||
       '<tr><td colspan="6" class="muted">No announces from this identity.</td></tr>'}</tbody></table></div>`;
-  $$("[data-map]", $("#nodePage")).forEach((b) => (b.onclick = async () => {
+
+  const choose = (v) => { heardBy = v; store("rradmon.heardBy", v); renderNodePage(lastNodeData); };
+  $("#heardBy").onchange = (e) => choose(e.target.value);
+  $$("table.per-obs tr[data-obs]", page).forEach((tr) => (tr.onclick = () => choose(tr.dataset.obs)));
+  $$("[data-map]", page).forEach((b) => (b.onclick = async () => {
     showTab("map");
     await loadMap();
     geo.zoom = 14;
@@ -472,18 +527,20 @@ async function loadNodePage(id) {
     drawMap();
   }));
 
-  // Charts. Signal: one series per observer, in a fixed colour order; past
-  // three, the rest share an "other observers" series.
+  // Charts. One observer: one series. All: one series per observer, in a
+  // fixed colour order; past three, the rest share an "other observers" series.
   const rate = d.announce_rate || [];
   const t0 = rate.length ? ms(rate[0].hour) : Date.now() - 23 * 3600e3;
   nodeCharts.ann = { el: "#annChart", opts: { title: "Announces", unit: "per hour", mode: "bar", yMin: 0, minSpan: 4,
     domain: [t0, t0 + 24 * 3600e3], series: [{ name: "Announces", color: "--s2", pts: rate.map((h) => ({ t: ms(h.hour), v: h.count })) }] } };
-  const sig = d.signal || [];
-  const obsOrder = [...new Set((d.per_observer || []).map((o) => o.observer).concat(sig.map((p) => p.observer)))];
+  const order = obs.map((o) => o.id);
   const seriesFor = (field) => {
-    const top = obsOrder.slice(0, 3).map((o, i) => ({ name: o, color: OBS_COLORS[i],
+    if (sel !== "all") {
+      return [{ name: sel, color: "--s1", pts: sig.filter((p) => p.observer === sel).map((p) => ({ t: ms(p.t), v: p[field], note: p.type })) }];
+    }
+    const top = order.slice(0, 3).map((o, i) => ({ name: o, color: OBS_COLORS[i],
       pts: sig.filter((p) => p.observer === o).map((p) => ({ t: ms(p.t), v: p[field], note: p.type })) }));
-    const rest = sig.filter((p) => !obsOrder.slice(0, 3).includes(p.observer));
+    const rest = sig.filter((p) => !order.slice(0, 3).includes(p.observer));
     if (rest.length) top.push({ name: "other observers", color: "--text-3", pts: rest.map((p) => ({ t: ms(p.t), v: p[field], note: `${p.type} · ${p.observer}` })) });
     return top;
   };
@@ -660,66 +717,139 @@ $$("#chanRange button").forEach((b) => {
 $("#obsSelect").onchange = loadChannel;
 
 // ---------- observers ----------
+// A stable list (local first, then online, then by name) with a 24 h noise
+// floor sparkline; an observer opens on its own page (#observer=<id>).
 function uptime(s) {
   if (s == null) return "–";
   const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
   return d ? `${d} d ${h} h` : h ? `${h} h ${m} min` : `${m} min`;
 }
 const STATE_TEXT = { online: "Online", silent: "No data", offline: "Offline" };
-async function loadObservers() {
-  const list = await api("/api/observers");
-  $("#obsEmpty").hidden = list.length > 0;
-  $("#obsGrid").innerHTML = list.map((o) => {
-    const st = o.status || {};
-    const src = o.source === "mqtt" ? "MQTT" : o.source === "rnode-serial" ? "Local RNode" : esc(o.source);
-    const kv = (k, v, title = "") => `<div${title ? ` title="${esc(title)}"` : ""}><div class="k">${k}</div><div class="v">${v}</div></div>`;
-    const sig = o.avg_rssi_1h == null ? "–" : `${num(o.avg_rssi_1h, 0)} dBm / ${num(o.avg_snr_1h, 1)} dB`;
-    const util = o.util_s == null ? "–" : `${num(o.util_s, 1)} % / ${num(o.util_l, 2)} %`;
-    const problems = [];
-    if (o.orphans_24h) problems.push(`${o.orphans_24h} orphan${o.orphans_24h > 1 ? "s" : ""}`);
-    if (o.partial_24h) problems.push(`${o.partial_24h} partial`);
-    if (o.mqtt && o.mqtt.seq_gaps) problems.push(`${o.mqtt.seq_gaps} lost over MQTT`);
-    if (o.mqtt && o.mqtt.invalid) problems.push(`${o.mqtt.invalid} rejected`);
-    if (o.mqtt && o.mqtt.rate_limited) problems.push(`${o.mqtt.rate_limited} rate-limited`);
-    if (st.rx_errors) problems.push(`${st.rx_errors} radio errors`);
-    if (st.mqtt_dropped) problems.push(`${st.mqtt_dropped} dropped by observer`);
-    const extra = [];
-    // Below 2.5 V there is no battery fitted (the divider reads near zero on USB power)
-    if (st.battery_mv >= 2500) extra.push(kv("Battery", `${(st.battery_mv / 1000).toFixed(2)} V`));
-    // A local RNode reports no uptime; show time since Rradmon brought it online
-    let up = st.uptime_s;
-    if (up == null && o.state === "online" && o.source === "rnode-serial" && o.status_t) up = (Date.now() - ms(o.status_t)) / 1000;
-    if (st.rssi_wifi) extra.push(kv("Wi-Fi", `${st.rssi_wifi} dBm`));
-    if (o.lat != null && o.lon != null) extra.push(kv("Position", `${num(o.lat, 4)}, ${num(o.lon, 4)}`));
-    return `<article class="obs-card">
-      <header>
-        <span class="state ${esc(o.state)}"></span>
-        <h3>${esc(o.ext_id)}</h3>
-        <span class="tag">${src}</span>
-        <span class="state-text">${STATE_TEXT[o.state] || esc(o.state)}</span>
-      </header>
-      <div class="muted small">${esc(o.firmware) || "firmware not reported"}${o.software ? " · " + esc(o.software) : ""}</div>
-      <div class="kv">
-        ${kv("Last heard", ago(o.last_seen), new Date(o.last_seen).toLocaleString())}
-        ${kv("Uptime", uptime(up))}
-        ${kv("Received 1 h / 24 h", `${o.rx_1h} / ${o.rx_24h}`)}
-        ${kv("Only here, 24 h", `${o.only_here_24h} of ${o.packets_24h}`, "Packets no other observer heard")}
-        ${kv("Signal, 1 h avg", sig)}
-        ${kv("Utilisation short / long", util)}
-        ${kv("Noise floor", o.noise_floor == null ? "–" : `${num(o.noise_floor, 0)} dBm`)}
-        ${extra.join("")}
-      </div>
-      <div class="obs-foot">
-        <span class="${problems.length ? "" : "muted"}">${problems.length ? problems.join(" · ") : "No losses or errors recorded"}</span>
-        ${o.chan_t ? `<button class="link" data-chan="${o.id}">Channel history</button>` : ""}
-      </div>
-    </article>`;
-  }).join("");
-  $$("#obsGrid [data-chan]").forEach((b) => (b.onclick = () => {
-    $("#obsSelect").value = b.dataset.chan;
-    showTab("channel");
-  }));
+const srcLabel = (o) => (o.local ? "Local RNode" : o.source === "mqtt" ? "MQTT" : esc(o.source));
+function obsProblems(o) {
+  const st = o.status || {};
+  const p = [];
+  if (o.orphans_24h) p.push(`${o.orphans_24h} orphan${o.orphans_24h > 1 ? "s" : ""}`);
+  if (o.partial_24h) p.push(`${o.partial_24h} partial`);
+  if (o.mqtt && o.mqtt.seq_gaps) p.push(`${o.mqtt.seq_gaps} lost over MQTT`);
+  if (o.mqtt && o.mqtt.invalid) p.push(`${o.mqtt.invalid} rejected`);
+  if (o.mqtt && o.mqtt.rate_limited) p.push(`${o.mqtt.rate_limited} rate-limited`);
+  if (st.rx_errors) p.push(`${st.rx_errors} radio errors`);
+  if (st.mqtt_dropped) p.push(`${st.mqtt_dropped} dropped by observer`);
+  return p;
 }
+// Tiny line chart, no axes: the shape of the last 24 h. Hover gives the range.
+function sparkline(points, unit = "dBm") {
+  if (!points || points.length < 2) return '<span class="muted">–</span>';
+  const W = 120, H = 26, pad = 3;
+  const ts = points.map((p) => ms(p.t)), vs = points.map((p) => p.v);
+  const t1 = Date.now(), t0 = t1 - 24 * 3600e3;
+  let lo = Math.min(...vs), hi = Math.max(...vs);
+  if (hi - lo < 6) { const mid = (hi + lo) / 2; lo = mid - 3; hi = mid + 3; }
+  const X = (t) => pad + ((t - t0) / (t1 - t0)) * (W - 2 * pad);
+  const Y = (v) => H - pad - ((v - lo) / (hi - lo)) * (H - 2 * pad);
+  let d = "";
+  points.forEach((p, i) => {
+    const gap = i > 0 && ts[i] - ts[i - 1] > 45 * 60e3; // break where reports stopped
+    d += `${i === 0 || gap ? "M" : "L"}${X(ts[i]).toFixed(1)},${Y(p.v).toFixed(1)}`;
+  });
+  const last = points[points.length - 1];
+  const title = `Last 24 h: ${num(Math.min(...vs), 0)} to ${num(Math.max(...vs), 0)} ${unit}, now ${num(last.v, 0)} ${unit}`;
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${title}"><title>${title}</title>
+    <path d="${d}" fill="none" style="stroke:var(--s1)" stroke-width="1.5" stroke-linejoin="round"/>
+    <circle cx="${X(ms(last.t)).toFixed(1)}" cy="${Y(last.v).toFixed(1)}" r="2.5" style="fill:var(--s1)"/></svg>`;
+}
+let observerList = [];
+async function loadObservers() {
+  observerList = await api("/api/observers");
+  $("#obsEmpty").hidden = observerList.length > 0;
+  $("#obsBody").innerHTML = observerList.map((o) => {
+    const problems = obsProblems(o);
+    return `<tr data-id="${o.id}">
+      <td><span class="state ${esc(o.state)}" title="${STATE_TEXT[o.state] || esc(o.state)}"></span></td>
+      <td><span class="mono">${esc(o.ext_id)}</span> <span class="tag">${srcLabel(o)}</span>
+        <div class="muted small">${esc(o.firmware) || "firmware not reported"}</div></td>
+      <td title="${new Date(o.last_seen).toLocaleString()}">${ago(o.last_seen)}</td>
+      <td class="num">${o.rx_1h} / ${o.rx_24h}</td>
+      <td class="num" title="Packets in the last 24 h no other observer heard">${o.only_here_24h}</td>
+      <td class="num">${o.avg_rssi_1h == null ? "–" : `${num(o.avg_rssi_1h, 0)} / ${num(o.avg_snr_1h, 1)}`}</td>
+      <td class="num">${o.util_s == null ? "–" : `${num(o.util_s, 1)} %`}</td>
+      <td class="num">${o.noise_floor == null ? "–" : num(o.noise_floor, 0)}</td>
+      <td>${sparkline(o.noise_24h)}</td>
+      <td class="notes ${problems.length ? "" : "muted"}">${problems.length ? problems.join(" · ") : "none"}</td></tr>`;
+  }).join("");
+}
+$("#obsBody").addEventListener("click", (e) => {
+  const tr = e.target.closest("tr[data-id]");
+  if (tr) location.hash = `observer=${tr.dataset.id}`;
+});
+
+// Observer page
+let currentObserver = null;
+let obsHours = Number(store("rradmon.obsHours")) || 24;
+const obsCharts = {};
+function showObserverPage(id) {
+  if (currentTab !== "observer" && currentTab !== "node") returnTab = currentTab;
+  currentObserver = id;
+  showTab("observer");
+  scrollTo(0, 0);
+  loadObserverPage(id);
+}
+$("#observerBack").onclick = () => {
+  if (history.length > 1 && location.hash.startsWith("#observer=")) history.back();
+  else showTab("observers");
+};
+$$("#obsRange button").forEach((b) => {
+  b.setAttribute("aria-pressed", Number(b.dataset.h) === obsHours);
+  b.onclick = () => {
+    obsHours = Number(b.dataset.h);
+    store("rradmon.obsHours", obsHours);
+    $$("#obsRange button").forEach((x) => x.setAttribute("aria-pressed", x === b));
+    if (currentObserver) loadObserverPage(currentObserver);
+  };
+});
+async function loadObserverPage(id) {
+  if (!observerList.length) observerList = await api("/api/observers");
+  const o = observerList.find((x) => String(x.id) === String(id));
+  if (!o) { $("#observerHead").innerHTML = `<p class="empty">No observer ${esc(id)}.</p>`; return; }
+  const st = o.status || {};
+  let up = st.uptime_s;
+  if (up == null && o.state === "online" && o.local && o.status_t) up = (Date.now() - ms(o.status_t)) / 1000;
+  const kv = (k, v, title = "") => `<div${title ? ` title="${esc(title)}"` : ""}><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  const problems = obsProblems(o);
+  const extra = [];
+  if (st.battery_mv >= 2500) extra.push(kv("Battery", `${(st.battery_mv / 1000).toFixed(2)} V`)); // below: none fitted
+  if (st.rssi_wifi) extra.push(kv("Wi-Fi", `${st.rssi_wifi} dBm`));
+  if (o.lat != null && o.lon != null) extra.push(kv("Position", `${num(o.lat, 5)}, ${num(o.lon, 5)}`));
+  $("#observerHead").innerHTML = `
+    <header class="node-head">
+      <h2><span class="state ${esc(o.state)}"></span> <span class="mono">${esc(o.ext_id)}</span> <span class="tag">${srcLabel(o)}</span>
+        <span class="muted small">${STATE_TEXT[o.state] || esc(o.state)}</span></h2>
+      <div class="muted">${esc(o.firmware) || "firmware not reported"}${o.software ? " · " + esc(o.software) : ""}</div>
+    </header>
+    <div class="kv kv4">
+      ${kv("Last heard", ago(o.last_seen), new Date(o.last_seen).toLocaleString())}
+      ${kv("Uptime", uptime(up))}
+      ${kv("Received 1 h / 24 h", `${o.rx_1h} / ${o.rx_24h}`)}
+      ${kv("Only here, 24 h", `${o.only_here_24h} of ${o.packets_24h}`, "Packets no other observer heard")}
+      ${kv("Signal, 1 h avg", o.avg_rssi_1h == null ? "–" : `${num(o.avg_rssi_1h, 0)} dBm / ${num(o.avg_snr_1h, 1)} dB`)}
+      ${kv("Utilisation now / long", o.util_s == null ? "–" : `${num(o.util_s, 1)} % / ${num(o.util_l, 2)} %`)}
+      ${kv("Noise floor now", o.noise_floor == null ? "–" : `${num(o.noise_floor, 0)} dBm`)}
+      ${kv("Losses and errors, 24 h", problems.length ? problems.join(" · ") : "none")}
+      ${extra.join("")}
+    </div>`;
+  const pts = await api(`/api/channel/${o.id}?hours=${obsHours}`);
+  if (String(currentObserver) !== String(id)) return;
+  const now = Date.now();
+  const domain = [now - obsHours * 3600e3, now];
+  obsCharts.noise = { el: "#obsNoiseChart", opts: { unit: "dBm", mode: "line", minSpan: 10, domain, series: [
+    { name: "Noise floor", color: "--s1", pts: pts.map((p) => ({ t: ms(p.t), v: p.noise_floor })) }] } };
+  obsCharts.util = { el: "#obsUtilChart", opts: { title: "Utilisation", unit: "%", mode: "line", yMin: 0, minSpan: 5, domain, series: [
+    { name: "Short-term", color: "--s1", pts: pts.map((p) => ({ t: ms(p.t), v: p.util_s })) },
+    { name: "Long-term", color: "--s2", pts: pts.map((p) => ({ t: ms(p.t), v: p.util_l })) }] } };
+  Object.values(obsCharts).forEach(drawChart);
+}
+
 async function loadChannel() {
   const id = $("#obsSelect").value || (observers[0] && observers[0].id);
   if (!id) return;
@@ -738,7 +868,7 @@ async function loadChannel() {
 }
 
 function redrawCharts() {
-  Object.values(nodeCharts).concat(Object.values(chanCharts)).forEach((c) => { if ($(c.el)) drawChart(c); });
+  Object.values(nodeCharts).concat(Object.values(chanCharts), Object.values(obsCharts)).forEach((c) => { if ($(c.el)) drawChart(c); });
 }
 let resizeTimer;
 addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(redrawCharts, 150); });
@@ -861,14 +991,18 @@ function drawChart({ el, opts }) {
 // ---------- start ----------
 addEventListener("hashchange", () => {
   const m = location.hash.match(/^#node=([0-9a-f]{32})$/);
+  const o = location.hash.match(/^#observer=(\d+)$/);
   if (m) showNodePage(m[1]);
-  else if (currentTab === "node") showTab(returnTab);
+  else if (o) showObserverPage(o[1]);
+  else if (currentTab === "node" || currentTab === "observer") showTab(returnTab);
 });
 (async function start() {
   await loadSummary().catch(console.error);
   await loadFeed().catch(console.error);
   const m = location.hash.match(/^#node=([0-9a-f]{32})$/);
+  const o = location.hash.match(/^#observer=(\d+)$/);
   if (m) showNodePage(m[1]);
+  else if (o) showObserverPage(o[1]);
   else showTab(store("rradmon.tab") || "live");
   connect();
   setInterval(() => loadSummary().catch(console.error), 30000);

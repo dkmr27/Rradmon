@@ -163,7 +163,7 @@ a.node:hover, button.link:hover { text-decoration: underline; }
 .obs-card header { display: flex; align-items: center; gap: 8px; }
 .obs-card h3 { margin: 0; font-size: 15px; font-family: var(--mono); }
 .obs-card .state-text { margin-left: auto; font-size: 12px; color: var(--text-2); }
-.state { width: 10px; height: 10px; border-radius: 50%; background: var(--text-3); flex: none; box-sizing: border-box; }
+.state { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--text-3); flex: none; box-sizing: border-box; }
 .state.online { background: var(--good); }
 .state.silent { background: var(--warn); }
 .state.offline { background: transparent; border: 2px solid var(--text-3); }
@@ -262,3 +262,15 @@ input.hash-search { min-width: 0; width: 170px; font-family: var(--mono); }
 /* Untrusted text from announces: wrap rather than widen the table */
 td.notes { overflow-wrap: anywhere; max-width: 60ch; }
 @media (max-width: 900px) { .kv.kv4 { grid-template-columns: repeat(2, 1fr); } .node-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* Node page: as heard by */
+.heard-by { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 4px 0 12px; }
+.heard-by label { font-weight: 600; }
+.heard-by select { min-width: 220px; }
+table.per-obs tr[data-obs] { cursor: pointer; }
+table.per-obs tr.sel td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+/* Observers list */
+.obs-list tbody tr { cursor: pointer; }
+.obs-list td:first-child { width: 1%; }
+.spark { display: block; }
+.node-head h2 .state { display: inline-block; vertical-align: 2px; }

@@ -76,10 +76,36 @@
   </section>
 
   <section id="tab-observers" class="tab" hidden>
-    <p class="hint">Each observer is a radio feeding Rradmon: a local RNode, or a remote one over MQTT.
-      "Only here" counts packets in the last 24 h that no other observer heard.</p>
-    <div class="obs-grid" id="obsGrid"></div>
-    <p class="empty" id="obsEmpty" hidden>No observers yet.</p>
+    <p class="hint">Each observer is a radio feeding Rradmon: the local RNode attached to this server, or a remote one
+      over MQTT. "Only here" counts packets in the last 24 h that no other observer heard. Click one for its history.</p>
+    <div class="table-wrap">
+      <table class="obs-list">
+        <thead><tr>
+          <th></th><th>Observer</th><th>Last heard</th>
+          <th class="num" title="Receptions in the last hour / 24 h">Received 1 h / 24 h</th>
+          <th class="num">Only here</th>
+          <th class="num" title="Average RSSI (dBm) / SNR (dB) of receptions in the last hour">Signal 1 h</th>
+          <th class="num">Utilisation</th>
+          <th class="num" title="dBm">Noise floor</th>
+          <th>Noise floor, 24 h</th>
+          <th>Losses, 24 h</th>
+        </tr></thead>
+        <tbody id="obsBody"></tbody>
+      </table>
+      <p class="empty" id="obsEmpty" hidden>No observers yet.</p>
+    </div>
+  </section>
+
+  <section id="tab-observer" class="tab node-page" hidden>
+    <div class="toolbar"><button id="observerBack" class="btn">← Back</button></div>
+    <div id="observerHead"></div>
+    <div class="toolbar">
+      <div class="seg" id="obsRange">
+        <button data-h="1">1 h</button><button data-h="6">6 h</button><button data-h="24">24 h</button><button data-h="168">7 d</button>
+      </div>
+    </div>
+    <div class="card"><h3>Noise floor (dBm)</h3><div class="chart" id="obsNoiseChart"></div></div>
+    <div class="card"><h3>Channel utilisation (%)</h3><div class="chart" id="obsUtilChart"></div></div>
   </section>
 
   <section id="tab-map" class="tab" hidden>
