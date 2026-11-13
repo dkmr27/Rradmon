@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/dkmr27/Rradmon/internal/mqtt"
 	"github.com/dkmr27/Rradmon/internal/store"
 	"github.com/dkmr27/Rradmon/internal/web"
 )
@@ -60,6 +61,7 @@ func runServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	dbPath := fs.String("db", "rradmon.db", "database file")
 	addr := fs.String("http", "127.0.0.1:8080", "web UI address")
+	localObs := fs.String("local", "", "treat this MQTT observer id as the local observer")
 	fs.Parse(args)
 	if _, err := os.Stat(*dbPath); err != nil {
 		return fmt.Errorf("serve: %w", err)
@@ -69,6 +71,9 @@ func runServe(args []string) error {
 		return err
 	}
 	defer st.Close()
+	if err := setLocalObserver(st, fs, *localObs); err != nil {
+		return err
+	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	_, shutdown, err := startHTTP(*addr, st, log)
 	if err != nil {
@@ -79,4 +84,22 @@ func runServe(args []string) error {
 	defer stop()
 	<-ctx.Done()
 	return nil
+}
+
+// setLocalObserver stores -local when it was given (an empty value given
+// explicitly clears it); without the flag the stored choice stays.
+func setLocalObserver(st *store.Store, fs *flag.FlagSet, id string) error {
+	given := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "local" {
+			given = true
+		}
+	})
+	if !given {
+		return nil
+	}
+	if id != "" && !mqtt.ValidObserverID(id) {
+		return fmt.Errorf("-local: invalid observer id %q", id)
+	}
+	return st.SetSetting("observer.local", id)
 }

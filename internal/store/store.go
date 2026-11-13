@@ -186,7 +186,10 @@ func (s *Store) TouchObserver(extID string, t time.Time) error {
 
 // Settings with their defaults (spec §7).
 var defaultSettings = map[string]string{
-	"ingest.store_payloads":  "1",
+	"ingest.store_payloads": "1",
+	// An MQTT observer to treat as local ("us"); RNodes attached to this
+	// server are always local
+	"observer.local":         "",
 	"ingest.window_announce": "4h",
 	"ingest.window_other":    "10m",
 	"retain.receptions_days": "14",

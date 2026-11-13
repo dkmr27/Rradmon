@@ -198,3 +198,29 @@ func TestObserverNodesAndBestRSSI(t *testing.T) {
 		}
 	}
 }
+
+// An MQTT observer can be designated the local one.
+func TestDesignatedLocalObserver(t *testing.T) {
+	st := openTestStore(t)
+	now := time.Now()
+	for _, id := range []string{"aaa-remote", "zzz-mine"} {
+		if _, err := st.Observer(id, "mqtt", now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	vs, _ := st.Observers(now)
+	if vs[0].ExtID != "aaa-remote" || vs[0].Local || vs[1].Local {
+		t.Fatalf("before: %s local=%v", vs[0].ExtID, vs[0].Local)
+	}
+	if err := st.SetSetting("observer.local", "zzz-mine"); err != nil {
+		t.Fatal(err)
+	}
+	vs, _ = st.Observers(now)
+	if vs[0].ExtID != "zzz-mine" || !vs[0].Local || vs[1].Local {
+		t.Errorf("observers after: %s local=%v", vs[0].ExtID, vs[0].Local)
+	}
+	sm, _ := st.Summary(now)
+	if sm.Observers[0].ExtID != "zzz-mine" || !sm.Observers[0].Local {
+		t.Errorf("summary after: %+v", sm.Observers[0])
+	}
+}

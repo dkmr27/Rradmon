@@ -45,14 +45,20 @@ function store(key, val) { try { if (val === undefined) return localStorage.getI
 // ---------- tabs ----------
 let currentTab = "live";
 function showTab(name) {
+  // Tabs that are not shown (no local observer; only one observer) fall back
+  if (name === "local" && !localObserver) name = "live";
+  if (name === "channel") name = localObserver ? "local" : "live"; // old saved tab
   currentTab = name;
   const nav = name === "node" ? "nodes" : name === "observer" ? "observers" : name;
+  const section = name === "local" ? "observer" : name;
   $$(".tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === nav));
-  $$(".tab").forEach((s) => (s.hidden = s.id !== `tab-${name}`));
+  $$(".tab").forEach((s) => (s.hidden = s.id !== `tab-${section}`));
+  // The Local tab is the local observer's page, without a Back button
+  $("#observerBack").hidden = name === "local";
   if (name === "nodes") loadNodes();
-  if (name === "channel") loadChannel();
   if (name === "observers") loadObservers();
   if (name === "map") loadMap();
+  if (name === "local") { currentObserver = localObserver.id; loadObserverPage(currentObserver); }
   if (name !== "node" && name !== "observer") store("rradmon.tab", name);
 }
 $$(".tabs button").forEach((b) => (b.onclick = () => {
@@ -62,9 +68,17 @@ $$(".tabs button").forEach((b) => (b.onclick = () => {
 
 // ---------- stats strip ----------
 let observers = [];
+let localObserver = null;
 async function loadSummary() {
   const s = await api("/api/summary");
   observers = s.observers || [];
+  // Local tab when there is a local observer; Observers tab unless the local
+  // one is the only observer
+  localObserver = observers.find((o) => o.local) || null;
+  $('.tabs [data-tab="local"]').hidden = !localObserver;
+  const onlyLocal = observers.length <= 1 && (!observers.length || observers[0].local);
+  $('.tabs [data-tab="observers"]').hidden = onlyLocal;
+  if ((onlyLocal && currentTab === "observers") || (!localObserver && currentTab === "local")) showTab(localObserver ? "local" : "live");
   // Channel figures as heard by the local RNode (else the first observer)
   const obs = observers.find((o) => o.local) || observers[0];
   const heardBy = obs ? `as heard by ${esc(obs.ext_id)}${obs.local ? " (local)" : ""}` : "";
@@ -77,10 +91,6 @@ async function loadSummary() {
       ? stat("Channel utilisation", obs.util_s == null ? "–" : `${num(obs.util_s)} %`, `long-term ${num(obs.util_l, 2)} % · ${heardBy}`) +
         stat("Noise floor", obs.noise_floor == null ? "–" : `${num(obs.noise_floor, 0)} dBm`, heardBy)
       : "");
-  const sel = $("#obsSelect");
-  if (sel.options.length !== observers.length) {
-    sel.innerHTML = observers.map((o) => `<option value="${o.id}">${esc(o.ext_id)}${o.local ? " (local)" : ""}</option>`).join("");
-  }
 }
 
 // ---------- live feed ----------
@@ -377,7 +387,7 @@ function throttledRefresh() {
     loadSummary().catch(console.error);
     if (currentTab === "nodes" && Date.now() - lastNodesRefresh > 5000) loadNodes();
     if (currentTab === "node" && currentNode && Date.now() - lastNodesRefresh > 5000) loadNodePage(currentNode);
-    if (currentTab === "channel") loadChannel();
+    if (currentTab === "local" && localObserver) { observerList = []; loadObserverPage(localObserver.id); }
     if (currentTab === "observers") loadObservers();
     if (currentTab === "observer" && currentObserver) { observerList = []; loadObserverPage(currentObserver); }
     if (currentTab === "map") loadMap();
@@ -738,20 +748,6 @@ async function loadMap() {
   addEventListener("resize", () => { if (currentTab === "map") drawMap(); });
 })();
 
-// ---------- channel ----------
-let chanHours = Number(store("rradmon.chanHours")) || 1;
-const chanCharts = {};
-$$("#chanRange button").forEach((b) => {
-  b.setAttribute("aria-pressed", Number(b.dataset.h) === chanHours);
-  b.onclick = () => {
-    chanHours = Number(b.dataset.h);
-    store("rradmon.chanHours", chanHours);
-    $$("#chanRange button").forEach((x) => x.setAttribute("aria-pressed", x === b));
-    loadChannel();
-  };
-});
-$("#obsSelect").onchange = loadChannel;
-
 // ---------- observers ----------
 // A stable list (local first, then online, then by name) with a 24 h noise
 // floor sparkline; an observer opens on its own page (#observer=<id>).
@@ -845,6 +841,7 @@ let obsHours = Number(store("rradmon.obsHours")) || 24;
 const obsCharts = {};
 function showObserverPage(id) {
   if (currentTab !== "observer" && currentTab !== "node") returnTab = currentTab;
+  if (localObserver && String(localObserver.id) === String(id) && currentTab === "local") return;
   currentObserver = id;
   showTab("observer");
   scrollTo(0, 0);
@@ -906,25 +903,8 @@ async function loadObserverPage(id) {
   Object.values(obsCharts).forEach(drawChart);
 }
 
-async function loadChannel() {
-  const id = $("#obsSelect").value || (observers[0] && observers[0].id);
-  if (!id) return;
-  const pts = await api(`/api/channel/${id}?hours=${chanHours}`);
-  const now = Date.now();
-  const domain = [now - chanHours * 3600e3, now];
-  chanCharts.util = { el: "#utilChart", opts: { title: "Utilisation", unit: "%", mode: "line", yMin: 0, minSpan: 5, domain, series: [
-    { name: "Short-term", color: "--s1", pts: pts.map((p) => ({ t: ms(p.t), v: p.util_s })) },
-    { name: "Long-term", color: "--s2", pts: pts.map((p) => ({ t: ms(p.t), v: p.util_l })) },
-  ] } };
-  chanCharts.noise = { el: "#noiseChart", opts: { unit: "dBm", mode: "line", minSpan: 10, domain, series: [
-    { name: "Noise floor", color: "--s1", pts: pts.map((p) => ({ t: ms(p.t), v: p.noise_floor })) },
-  ] } };
-  drawChart(chanCharts.util);
-  drawChart(chanCharts.noise);
-}
-
 function redrawCharts() {
-  Object.values(nodeCharts).concat(Object.values(chanCharts), Object.values(obsCharts)).forEach((c) => { if ($(c.el)) drawChart(c); });
+  Object.values(nodeCharts).concat(Object.values(obsCharts)).forEach((c) => { if ($(c.el)) drawChart(c); });
 }
 let resizeTimer;
 addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(redrawCharts, 150); });

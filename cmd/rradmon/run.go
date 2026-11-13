@@ -38,6 +38,7 @@ func runRun(args []string) error {
 	quiet := fs.Bool("quiet", false, "do not print each packet")
 	dur := fs.Duration("for", 0, "stop after this long (0 = until Ctrl+C)")
 	httpAddr := fs.String("http", "127.0.0.1:8080", "web UI address (empty to disable)")
+	localObs := fs.String("local", "", "treat this MQTT observer id as the local observer (an attached RNode always is)")
 	lat := fs.Float64("lat", 0, "position of the local RNode (optional, shown on the map)")
 	lon := fs.Float64("lon", 0, "position of the local RNode (optional)")
 	broker := brokerFlags(fs)
@@ -55,6 +56,9 @@ func runRun(args []string) error {
 	defer st.Close()
 	radio := ingest.Radio{FreqHz: uint32(*freq), BandwidthHz: uint32(*bw), SF: uint8(*sf), CR: uint8(*cr)}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	if err := setLocalObserver(st, fs, *localObs); err != nil {
+		return err
+	}
 	in, err := ingest.New(st, radio, log)
 	if err != nil {
 		return err

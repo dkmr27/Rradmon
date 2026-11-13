@@ -44,7 +44,16 @@ type ObserverRow struct {
 // LocalSource is the source of observers attached to this server.
 const LocalSource = "rnode-serial"
 
+// isLocal: an observer is "local" (us) if it is an RNode attached to this
+// server, or the MQTT observer named by the observer.local setting
+// (localExt). Read the setting before a query, not inside its row loop: the
+// store has one connection.
+func isLocal(source, extID, localExt string) bool {
+	return source == LocalSource || (extID != "" && extID == localExt)
+}
+
 func (s *Store) Summary(now time.Time) (Summary, error) {
+	localExt := s.Setting("observer.local")
 	var sm Summary
 	hour := ms(now.Add(-time.Hour))
 	err := s.DB.QueryRow(`SELECT
@@ -65,7 +74,7 @@ func (s *Store) Summary(now time.Time) (Summary, error) {
 		FROM observers o
 		LEFT JOIN channel_stats c ON c.rowid = (SELECT rowid FROM channel_stats
 			WHERE observer_id = o.id ORDER BY t DESC LIMIT 1)
-		ORDER BY o.source = 'rnode-serial' DESC, o.ext_id`)
+		ORDER BY (o.source = 'rnode-serial' OR o.ext_id = ?) DESC, o.ext_id`, localExt)
 	if err != nil {
 		return sm, err
 	}
@@ -76,7 +85,7 @@ func (s *Store) Summary(now time.Time) (Summary, error) {
 		if err := rows.Scan(&o.ID, &o.ExtID, &o.Source, &last, &o.UtilShort, &o.UtilLong, &o.NoiseFloor); err != nil {
 			return sm, err
 		}
-		o.Local = o.Source == LocalSource
+		o.Local = isLocal(o.Source, o.ExtID, localExt)
 		o.LastSeen = fromMs(last)
 		sm.Observers = append(sm.Observers, o)
 	}
@@ -523,13 +532,14 @@ func (s *Store) Node(identHex string, now time.Time) (*NodeDetail, error) {
 	}
 
 	// Per observer, last 24 h
-	rows, err = s.DB.Query(`SELECT o.ext_id, o.source = 'rnode-serial', COUNT(*), AVG(r.rssi), MIN(r.rssi), MAX(r.rssi),
+	rows, err = s.DB.Query(`SELECT o.ext_id, (o.source = 'rnode-serial' OR o.ext_id = ?3), COUNT(*), AVG(r.rssi), MIN(r.rssi), MAX(r.rssi),
 			AVG(r.snr), MIN(r.snr), MAX(r.t_rx),
 			(SELECT rssi FROM receptions x WHERE x.observer_id = o.id AND x.tx_identity = ?1 AND x.rssi IS NOT NULL ORDER BY x.t_rx DESC LIMIT 1),
 			(SELECT snr FROM receptions x WHERE x.observer_id = o.id AND x.tx_identity = ?1 AND x.rssi IS NOT NULL ORDER BY x.t_rx DESC LIMIT 1)
 		FROM receptions r JOIN observers o ON o.id = r.observer_id
 		WHERE r.tx_identity = ?1 AND r.rssi IS NOT NULL AND r.t_rx >= ?2
-		GROUP BY o.id ORDER BY o.source = 'rnode-serial' DESC, COUNT(*) DESC, o.ext_id`, ident, ms(now.Add(-24*time.Hour)))
+		GROUP BY o.id ORDER BY (o.source = 'rnode-serial' OR o.ext_id = ?3) DESC, COUNT(*) DESC, o.ext_id`,
+		ident, ms(now.Add(-24*time.Hour)), s.Setting("observer.local"))
 	if err != nil {
 		return nil, err
 	}
@@ -648,6 +658,7 @@ var statusFields = []string{"uptime_s", "rx_frames", "rx_errors", "mqtt_dropped"
 // Observers lists every observer with its health figures, in a stable
 // order: local first, then online, silent and offline, each by name.
 func (s *Store) Observers(now time.Time) ([]ObserverView, error) {
+	localExt := s.Setting("observer.local")
 	hour, day := ms(now.Add(-time.Hour)), ms(now.Add(-24*time.Hour))
 	rows, err := s.DB.Query(`
 		SELECT o.id, o.ext_id, COALESCE(o.source,''), o.first_seen, o.last_seen, o.online, o.status_t,
@@ -718,7 +729,7 @@ func (s *Store) Observers(now time.Time) ([]ObserverView, error) {
 				}
 			}
 		}
-		v.Local = v.Source == LocalSource
+		v.Local = isLocal(v.Source, v.ExtID, localExt)
 		out = append(out, v)
 	}
 	if err := rows.Err(); err != nil {

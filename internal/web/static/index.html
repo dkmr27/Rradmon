@@ -15,7 +15,7 @@
     <button role="tab" data-tab="nodes">Nodes</button>
     <button role="tab" data-tab="observers">Observers</button>
     <button role="tab" data-tab="map">Map</button>
-    <button role="tab" data-tab="channel">Channel</button>
+    <button role="tab" data-tab="local" hidden title="The local observer: an RNode attached to this server, or the MQTT observer chosen with -local">Local</button>
   </nav>
   <button class="theme" id="themeBtn" title="Toggle light/dark">◐</button>
 </header>
@@ -155,25 +155,6 @@
     </div>
   </section>
 
-  <section id="tab-channel" class="tab" hidden>
-    <div class="toolbar">
-      <select id="obsSelect"></select>
-      <div class="seg" id="chanRange">
-        <button data-h="1" aria-pressed="true">1 h</button>
-        <button data-h="6">6 h</button>
-        <button data-h="24">24 h</button>
-        <button data-h="168">7 d</button>
-      </div>
-    </div>
-    <div class="card">
-      <h3>Channel utilisation (%)</h3>
-      <div class="chart" id="utilChart"></div>
-    </div>
-    <div class="card">
-      <h3>Noise floor (dBm)</h3>
-      <div class="chart" id="noiseChart"></div>
-    </div>
-  </section>
 </main>
 
 <div class="tip" id="tip" hidden></div>

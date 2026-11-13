@@ -25,6 +25,8 @@ Reticulum LoRa radio monitor. Single Go binary, web UI embedded, SQLite store, M
 - `rradmon decode|import <capture.jsonl>` — replay a capture
 - `rradmon observe -port COM32 -id obs-bench-t3s3 $M` — RNode to MQTT (or `-replay file` to publish a capture)
 - `rradmon run $M -db x.db` — ingest from MQTT (add `-port` to also read a local RNode)
+- `-local <observer id>` (run/serve) marks an MQTT observer as the local one ("us"); an attached RNode always is.
+  Stored as the `observer.local` setting; `-local ""` clears it. The UI's Local tab shows the local observer.
 - Bench broker flags: `source secret/mqtt.env` sets `$M`. Broker address, username and password
   live only in `secret/` (git-ignored); never put them in a flag value, URL, tracked file, commit or log.
 
