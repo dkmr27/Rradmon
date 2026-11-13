@@ -250,6 +250,10 @@ type NodeRow struct {
 	// Distinct announces from this identity in the last 24 h (relayed copies
 	// count once); the page shows it as a rate per hour
 	Announces24h int64 `json:"announces_24h"`
+	// Strongest reception of this node in the last 24 h, by any observer,
+	// and which observer heard it
+	BestRSSI24h     *float64 `json:"best_rssi_24h"`
+	BestObserver24h string   `json:"best_observer_24h,omitempty"`
 }
 
 // Nodes lists nodes, optionally filtered by a search string matched against
@@ -276,9 +280,12 @@ func (s *Store) Nodes(q string, now time.Time) ([]NodeRow, error) {
 			(SELECT AVG(rssi) FROM receptions WHERE tx_identity = ids.ident AND t_rx >= ?),
 			(SELECT AVG(snr) FROM receptions WHERE tx_identity = ids.ident AND t_rx >= ?),
 			(SELECT COUNT(*) FROM announces WHERE identity_hash = ids.ident AND t_rx >= ?) AS ann24,
+			(SELECT MAX(rssi) FROM receptions WHERE tx_identity = ids.ident AND t_rx >= ?),
+			(SELECT o.ext_id FROM receptions r JOIN observers o ON o.id = r.observer_id
+				WHERE r.tx_identity = ids.ident AND r.t_rx >= ? AND r.rssi IS NOT NULL ORDER BY r.rssi DESC LIMIT 1),
 			(SELECT group_concat(lower(hex(hash)) || ' ' || lower(COALESCE(display_name,'')) || ' ' || lower(COALESCE(app_name,'')), ' ')
 				FROM destinations WHERE identity_hash = ids.ident)
-		FROM ids ORDER BY 7 DESC`, day, day, day)
+		FROM ids ORDER BY 7 DESC`, day, day, day, day, day)
 	if err != nil {
 		return nil, err
 	}
@@ -290,13 +297,15 @@ func (s *Store) Nodes(q string, now time.Time) ([]NodeRow, error) {
 			ident      []byte
 			name, apps sql.NullString
 			search     sql.NullString
+			bestObs    sql.NullString
 			last       int64
 		)
 		if err := rows.Scan(&ident, &name, &apps, &n.Destinations, &n.Announces, &n.MinHops, &last,
-			&n.HeardDirect, &n.LastRSSI, &n.LastSNR, &n.AvgRSSI24h, &n.AvgSNR24h, &n.Announces24h, &search); err != nil {
+			&n.HeardDirect, &n.LastRSSI, &n.LastSNR, &n.AvgRSSI24h, &n.AvgSNR24h, &n.Announces24h, &n.BestRSSI24h, &bestObs, &search); err != nil {
 			return nil, err
 		}
 		n.Identity, n.Name, n.LastSeen = hx(ident), name.String, fromMs(last)
+		n.BestObserver24h = bestObs.String
 		if apps.String != "" {
 			n.Apps = strings.Split(apps.String, "|")
 		}
@@ -758,4 +767,55 @@ func (s *Store) noiseSpark(observerID int64, now time.Time) ([]SparkPoint, error
 		out = append(out, SparkPoint{T: fromMs(t), V: v})
 	}
 	return out, rows.Err()
+}
+
+// HeardNode is a node an observer heard transmit, directly.
+type HeardNode struct {
+	Identity string    `json:"identity"`
+	Name     string    `json:"name"`
+	Count    int64     `json:"count"`
+	Last     time.Time `json:"last"`
+	LastRSSI *float64  `json:"last_rssi"`
+	LastSNR  *float64  `json:"last_snr"`
+	AvgRSSI  *float64  `json:"avg_rssi"`
+	AvgSNR   *float64  `json:"avg_snr"`
+}
+
+// ObserverNodes lists the nodes an observer heard directly since a time:
+// receptions whose transmitter is known (an announce heard from its own
+// node or from the relay that rebroadcast it, or a proof heard directly),
+// most recently heard first.
+func (s *Store) ObserverNodes(observerID int64, since time.Time) ([]HeardNode, error) {
+	rows, err := s.DB.Query(`SELECT r.tx_identity, COUNT(*), MAX(r.t_rx), AVG(r.rssi), AVG(r.snr),
+			(SELECT x.rssi FROM receptions x WHERE x.observer_id = ?1 AND x.tx_identity = r.tx_identity ORDER BY x.t_rx DESC LIMIT 1),
+			(SELECT x.snr FROM receptions x WHERE x.observer_id = ?1 AND x.tx_identity = r.tx_identity ORDER BY x.t_rx DESC LIMIT 1)
+		FROM receptions r
+		WHERE r.observer_id = ?1 AND r.tx_identity IS NOT NULL AND r.t_rx >= ?2
+		GROUP BY r.tx_identity ORDER BY MAX(r.t_rx) DESC`, observerID, ms(since))
+	if err != nil {
+		return nil, err
+	}
+	var out []HeardNode
+	var idents [][]byte
+	for rows.Next() {
+		var n HeardNode
+		var ident []byte
+		var last int64
+		if err := rows.Scan(&ident, &n.Count, &last, &n.AvgRSSI, &n.AvgSNR, &n.LastRSSI, &n.LastSNR); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		n.Identity, n.Last = hx(ident), fromMs(last)
+		out = append(out, n)
+		idents = append(idents, ident)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close() // one connection: finish before the name lookups
+	for i := range out {
+		out[i].Name = s.identityName(idents[i])
+	}
+	return out, nil
 }

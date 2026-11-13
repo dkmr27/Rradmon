@@ -65,6 +65,7 @@ func New(st *store.Store, log *slog.Logger) *Server {
 	s.mux.HandleFunc("GET /api/stream", s.stream)
 	s.mux.HandleFunc("GET /api/observers", s.observers)
 	s.mux.HandleFunc("GET /api/map", s.mapData)
+	s.mux.HandleFunc("GET /api/observers/{id}/nodes", s.observerNodes)
 	s.mux.HandleFunc("GET /api/packets/{id}/observations", s.packetObservations)
 	s.mux.HandleFunc("GET /api/orphans/{id}/observations", s.orphanObservations)
 	return s
@@ -172,6 +173,18 @@ func (s *Server) mapData(w http.ResponseWriter, r *http.Request) {
 	md, err := s.st.Map(time.Now())
 	md.Nodes, md.Observers = nonNil(md.Nodes), nonNil(md.Observers)
 	s.writeJSON(w, md, err)
+}
+
+// observerNodes: nodes an observer heard directly, ?days= (default 7).
+func (s *Server) observerNodes(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(r)
+	if !ok {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	days := intParam(r, "days", 7, 60)
+	nodes, err := s.st.ObserverNodes(id, time.Now().Add(-time.Duration(days)*24*time.Hour))
+	s.writeJSON(w, nonNil(nodes), err)
 }
 
 func idParam(r *http.Request) (int64, bool) {

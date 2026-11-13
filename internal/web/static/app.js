@@ -368,9 +368,7 @@ async function loadNodes() {
         <td>${name}<div class="muted mono">${short(n.identity, 16)}</div></td>
         <td>${apps || '<span class="muted">relay only</span>'}</td>
         <td title="${new Date(n.last_seen).toLocaleString()}">${ago(n.last_seen)}</td>
-        <td class="num">${num(n.last_rssi, 0)}</td>
-        <td class="num">${num(n.last_snr, 2)}</td>
-        <td class="num">${num(n.avg_rssi_24h, 0)}</td>
+        <td class="num" title="${n.best_observer_24h ? `heard by ${esc(n.best_observer_24h)}` : "no transmission heard from the node itself in the last 24 h (perhaps only via relays)"}">${n.best_rssi_24h == null ? "–" : `${num(n.best_rssi_24h, 0)} dBm`}</td>
         <td class="num" title="${n.announces_24h} announce${n.announces_24h === 1 ? "" : "s"} in the last 24 h">${perHour(n.announces_24h)}</td>
         <td class="num">${n.announces}</td>
         <td class="num">${n.min_hops ?? "–"}</td></tr>`;
@@ -786,6 +784,25 @@ $("#obsBody").addEventListener("click", (e) => {
 
 // Observer page
 let currentObserver = null;
+async function loadObserverNodes(o) {
+  const list = await api(`/api/observers/${o.id}/nodes?days=7`);
+  if (String(currentObserver) !== String(o.id)) return;
+  $("#obsNodesBody").innerHTML = list.map((n) => `<tr data-id="${n.identity}" data-obs="${esc(o.ext_id)}">
+      <td>${n.name ? esc(n.name) : `<span class="mono">${short(n.identity, 12)}</span>`}<div class="muted mono">${short(n.identity, 16)}</div></td>
+      <td class="num">${n.count}</td>
+      <td title="${new Date(n.last).toLocaleString()}">${ago(n.last)}</td>
+      <td class="num">${num(n.last_rssi, 0)} dBm / ${num(n.last_snr, 2)} dB</td>
+      <td class="num">${num(n.avg_rssi, 0)} dBm / ${num(n.avg_snr, 1)} dB</td></tr>`).join("") ||
+    '<tr><td colspan="5" class="muted">No node heard directly in the last 7 days.</td></tr>';
+}
+$("#obsNodesBody").addEventListener("click", (e) => {
+  const tr = e.target.closest("tr[data-id]");
+  if (!tr) return;
+  // Open the node as heard by this observer
+  heardBy = tr.dataset.obs;
+  store("rradmon.heardBy", heardBy);
+  openNode(tr.dataset.id);
+});
 let obsHours = Number(store("rradmon.obsHours")) || 24;
 const obsCharts = {};
 function showObserverPage(id) {
@@ -838,6 +855,7 @@ async function loadObserverPage(id) {
       ${kv("Losses and errors, 24 h", problems.length ? problems.join(" · ") : "none")}
       ${extra.join("")}
     </div>`;
+  loadObserverNodes(o);
   const pts = await api(`/api/channel/${o.id}?hours=${obsHours}`);
   if (String(currentObserver) !== String(id)) return;
   const now = Date.now();

@@ -274,3 +274,6 @@ table.per-obs tr.sel td { background: color-mix(in srgb, var(--accent) 12%, tran
 .obs-list td:first-child { width: 1%; }
 .spark { display: block; }
 .node-head h2 .state { display: inline-block; vertical-align: 2px; }
+
+.heard-nodes tbody tr[data-id] { cursor: pointer; }
+h3.section { font-size: 13px; color: var(--text-2); font-weight: 600; margin: 18px 0 4px; }

@@ -158,3 +158,43 @@ func TestNodePageStats(t *testing.T) {
 		t.Errorf("per observer: %+v", d.PerObserver)
 	}
 }
+
+// Nodes an observer heard directly, and the node list's best RSSI.
+func TestObserverNodesAndBestRSSI(t *testing.T) {
+	st := openTestStore(t)
+	if _, err := importCapture(st, "../../testdata/rig-corpus1.jsonl", true); err != nil {
+		t.Fatal(err)
+	}
+	var last, obsID int64
+	st.DB.QueryRow(`SELECT MAX(t_rx) FROM receptions`).Scan(&last)
+	st.DB.QueryRow(`SELECT id FROM observers WHERE ext_id = 'rnode:COM32'`).Scan(&obsID)
+	now := time.UnixMilli(last).Add(time.Minute)
+
+	heard, err := st.ObserverNodes(obsID, now.Add(-7*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]store.HeardNode{}
+	for _, h := range heard {
+		got[h.Identity[:8]] = h
+	}
+	rrptr, rnsd := got["135a9914"], got["24de22aa"]
+	if len(heard) != 2 || rrptr.Count != 3 || rnsd.Count != 3 {
+		t.Fatalf("heard directly: %+v", heard)
+	}
+	if rrptr.Name != "Testing-Rrptr" || rrptr.LastRSSI == nil || rrptr.AvgRSSI == nil {
+		t.Errorf("Rrptr row: %+v", rrptr)
+	}
+
+	nodes, err := st.Nodes("", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range nodes {
+		if n.Identity[:8] == "135a9914" {
+			if n.BestRSSI24h == nil || *n.BestRSSI24h != -33 || n.BestObserver24h != "rnode:COM32" {
+				t.Errorf("best RSSI %v by %q, want -33 by rnode:COM32", n.BestRSSI24h, n.BestObserver24h)
+			}
+		}
+	}
+}

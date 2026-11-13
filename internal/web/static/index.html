@@ -59,10 +59,11 @@
     <div class="table-wrap">
       <table class="nodes">
         <thead><tr>
-          <th>Node</th><th>Apps</th><th>Last heard</th><th class="num">Last RSSI</th><th class="num">Last SNR</th>
-          <th class="num">24 h RSSI</th>
+          <th>Node</th><th>Apps</th><th>Last heard</th>
+          <th class="num" title="Strongest reception of this node in the last 24 h, by any observer (hover a value for which)">Best RSSI, 24 h</th>
           <th class="num" title="Distinct announces from this node per hour, averaged over the last 24 h">Announces / h</th>
-          <th class="num">Announces</th><th class="num">Hops</th>
+          <th class="num">Announces</th>
+          <th class="num" title="Fewest hops on the latest announce of each of its destinations">Fewest hops</th>
         </tr></thead>
         <tbody id="nodesBody"></tbody>
       </table>
@@ -106,6 +107,18 @@
     </div>
     <div class="card"><h3>Noise floor (dBm)</h3><div class="chart" id="obsNoiseChart"></div></div>
     <div class="card"><h3>Channel utilisation (%)</h3><div class="chart" id="obsUtilChart"></div></div>
+    <h3 class="section">Nodes heard directly, last 7 days</h3>
+    <p class="muted small">Transmissions this observer heard from the node itself: its own announces and proofs, and
+      announces it rebroadcast as a relay. Click a node to see it as heard by this observer.</p>
+    <div class="table-wrap">
+      <table class="heard-nodes">
+        <thead><tr>
+          <th>Node</th><th class="num">Receptions</th><th>Last heard</th>
+          <th class="num">Last RSSI / SNR</th><th class="num">7 d average</th>
+        </tr></thead>
+        <tbody id="obsNodesBody"></tbody>
+      </table>
+    </div>
   </section>
 
   <section id="tab-map" class="tab" hidden>
