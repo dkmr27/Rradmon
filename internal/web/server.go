@@ -64,6 +64,7 @@ func New(st *store.Store, log *slog.Logger) *Server {
 	s.mux.HandleFunc("GET /api/channel/{observer}", s.channel)
 	s.mux.HandleFunc("GET /api/stream", s.stream)
 	s.mux.HandleFunc("GET /api/observers", s.observers)
+	s.mux.HandleFunc("GET /api/map", s.mapData)
 	s.mux.HandleFunc("GET /api/packets/{id}/observations", s.packetObservations)
 	s.mux.HandleFunc("GET /api/orphans/{id}/observations", s.orphanObservations)
 	return s
@@ -74,7 +75,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// pages the browser has open.
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:")
+	// Map tiles come from OpenStreetMap; the page can turn them off
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://tile.openstreetmap.org")
+	// Tile requests carry no referrer path beyond the origin
+	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 	if s.LoopbackOnly && !loopbackHost(r.Host) {
 		// Blocks DNS-rebinding: a hostile page cannot read the local API
 		// through a name that resolves to 127.0.0.1.
@@ -162,6 +166,12 @@ func (s *Server) feed(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.st.PacketFeed(before, after, q, limit)
 	s.writeJSON(w, nonNil(rows), err)
+}
+
+func (s *Server) mapData(w http.ResponseWriter, r *http.Request) {
+	md, err := s.st.Map(time.Now())
+	md.Nodes, md.Observers = nonNil(md.Nodes), nonNil(md.Observers)
+	s.writeJSON(w, md, err)
 }
 
 func idParam(r *http.Request) (int64, bool) {

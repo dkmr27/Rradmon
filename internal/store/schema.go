@@ -185,4 +185,12 @@ CREATE INDEX frame_errors_group ON frame_errors(group_id);
 ALTER TABLE packets ADD COLUMN full_hash BLOB;
 CREATE INDEX packets_full_hash ON packets(full_hash) WHERE full_hash IS NOT NULL;
 `,
+	// 5: what announces say about a destination: a one-line summary of its
+	// app data, and the height that interface-discovery announces give with
+	// their position (lat, lon and pos_source already exist)
+	`
+ALTER TABLE destinations ADD COLUMN info TEXT;
+ALTER TABLE destinations ADD COLUMN height REAL;
+ALTER TABLE destinations ADD COLUMN info_t INTEGER;  -- announce time the info came from
+`,
 }

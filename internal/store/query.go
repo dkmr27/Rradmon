@@ -314,6 +314,10 @@ type DestRow struct {
 	LastHops  *int64    `json:"last_hops"`
 	FirstSeen time.Time `json:"first_seen"`
 	LastSeen  time.Time `json:"last_seen"`
+	Info      string    `json:"info,omitempty"`
+	Lat       *float64  `json:"lat,omitempty"`
+	Lon       *float64  `json:"lon,omitempty"`
+	Height    *float64  `json:"height,omitempty"`
 }
 
 type AnnounceRow struct {
@@ -367,7 +371,8 @@ func (s *Store) Node(identHex string, now time.Time) (*NodeDetail, error) {
 	}
 
 	rows, err := s.DB.Query(`SELECT hash, COALESCE(app_name, hex(name_hash)), COALESCE(display_name,''),
-		announce_count, last_hops, first_seen, last_seen FROM destinations WHERE identity_hash = ? ORDER BY last_seen DESC`, ident)
+		announce_count, last_hops, first_seen, last_seen, COALESCE(info, ''), lat, lon, height
+		FROM destinations WHERE identity_hash = ? ORDER BY last_seen DESC`, ident)
 	if err != nil {
 		return nil, err
 	}
@@ -375,7 +380,7 @@ func (s *Store) Node(identHex string, now time.Time) (*NodeDetail, error) {
 		var r DestRow
 		var h []byte
 		var fs, ls int64
-		if err := rows.Scan(&h, &r.App, &r.Name, &r.Announces, &r.LastHops, &fs, &ls); err != nil {
+		if err := rows.Scan(&h, &r.App, &r.Name, &r.Announces, &r.LastHops, &fs, &ls, &r.Info, &r.Lat, &r.Lon, &r.Height); err != nil {
 			rows.Close()
 			return nil, err
 		}

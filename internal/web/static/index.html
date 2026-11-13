@@ -14,6 +14,7 @@
     <button role="tab" data-tab="live" aria-selected="true">Live</button>
     <button role="tab" data-tab="nodes">Nodes</button>
     <button role="tab" data-tab="observers">Observers</button>
+    <button role="tab" data-tab="map">Map</button>
     <button role="tab" data-tab="channel">Channel</button>
   </nav>
   <button class="theme" id="themeBtn" title="Toggle light/dark">◐</button>
@@ -75,6 +76,37 @@
       "Only here" counts packets in the last 24 h that no other observer heard.</p>
     <div class="obs-grid" id="obsGrid"></div>
     <p class="empty" id="obsEmpty" hidden>No observers yet.</p>
+  </section>
+
+  <section id="tab-map" class="tab" hidden>
+    <div class="toolbar">
+      <span id="mapSummary" class="muted"></span>
+      <label class="small"><input type="checkbox" id="mapTiles"> OpenStreetMap tiles</label>
+    </div>
+    <div class="map-wrap">
+      <div id="map" class="map">
+        <div id="mapLayer"></div>
+        <div class="map-ctl">
+          <button id="mapIn" class="btn" title="Zoom in">+</button>
+          <button id="mapOut" class="btn" title="Zoom out">−</button>
+          <button id="mapFit" class="btn" title="Fit everything placed">Fit</button>
+          <span id="mapZoom" class="muted small"></span>
+        </div>
+        <div class="map-legend">
+          <span><i class="dot fresh"></i>heard in the last hour</span>
+          <span><i class="dot day"></i>last day</span>
+          <span><i class="dot old"></i>older</span>
+          <span><i class="sq"></i>observer</span>
+        </div>
+        <div class="map-attr">Tiles © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors</div>
+      </div>
+      <aside class="map-side">
+        <h3>Placed nodes</h3>
+        <ul id="mapList" class="map-list"></ul>
+        <p class="muted small">Positions come from interface-discovery announces. Turning tiles off keeps the map working
+          without contacting OpenStreetMap (each tile request tells it which area you are viewing).</p>
+      </aside>
+    </div>
   </section>
 
   <section id="tab-channel" class="tab" hidden>

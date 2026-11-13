@@ -213,3 +213,40 @@ button.hash { background: none; border: 0; padding: 0; cursor: copy; color: var(
 button.hash:hover { color: var(--text); text-decoration: underline dotted; }
 button.hash.copied::after { content: " copied"; color: var(--good); font-family: system-ui, sans-serif; }
 input.hash-search { min-width: 0; width: 170px; font-family: var(--mono); }
+
+/* Map */
+.map-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; }
+.map { position: relative; height: 560px; overflow: hidden; border: 1px solid var(--border); border-radius: 8px;
+  cursor: grab; touch-action: none; user-select: none;
+  background-color: var(--surface-2);
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 64px 64px; }
+.map.dragging { cursor: grabbing; }
+.map .tile { position: absolute; width: 256px; height: 256px; pointer-events: none; }
+:root[data-theme="dark"] .map .tile { filter: brightness(0.75) contrast(1.05) saturate(0.85); }
+@media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) .map .tile { filter: brightness(0.75) contrast(1.05) saturate(0.85); } }
+.mk { position: absolute; transform: translate(-50%, -50%); border: 2px solid var(--surface); padding: 0; cursor: pointer; }
+.mk.node { width: 14px; height: 14px; border-radius: 50%; background: var(--text-3); box-shadow: 0 1px 3px rgb(0 0 0 / 0.35); }
+.mk.node.fresh { background: var(--good); }
+.mk.node.day { background: var(--warn); }
+.mk.obs { width: 12px; height: 12px; border-radius: 2px; background: var(--accent); cursor: default; transform: translate(-50%, -50%) rotate(45deg); }
+.mk.obs.offline, .mk.obs.silent { background: var(--text-3); }
+.mk .lbl { position: absolute; left: 14px; top: -3px; white-space: nowrap; font-size: 12px; font-weight: 600; color: var(--text);
+  text-shadow: 0 0 3px var(--surface), 0 0 3px var(--surface), 0 0 3px var(--surface); pointer-events: none; }
+.mk.obs .lbl { transform: rotate(-45deg); transform-origin: left top; left: 12px; top: 6px; font-weight: 500; }
+.map-ctl { position: absolute; top: 10px; left: 10px; display: flex; gap: 4px; align-items: center; }
+.map-ctl .btn { min-width: 30px; background: var(--surface); }
+.map-legend { position: absolute; bottom: 8px; left: 10px; display: flex; gap: 12px; font-size: 12px; color: var(--text-2);
+  background: color-mix(in srgb, var(--surface) 85%, transparent); padding: 3px 8px; border-radius: 6px; }
+.map-legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; background: var(--text-3); }
+.map-legend .dot.fresh { background: var(--good); }
+.map-legend .dot.day { background: var(--warn); }
+.map-legend .sq { display: inline-block; width: 8px; height: 8px; margin-right: 5px; background: var(--accent); transform: rotate(45deg); }
+.map-attr { position: absolute; bottom: 8px; right: 8px; font-size: 11px; color: var(--text-2);
+  background: color-mix(in srgb, var(--surface) 85%, transparent); padding: 1px 6px; border-radius: 4px; }
+.map-attr a { color: inherit; }
+.map-side { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px 14px 10px; align-self: start; }
+.map-list { list-style: none; padding: 0; margin: 0 0 8px; }
+.map-list li { padding: 5px 0; border-bottom: 1px solid var(--border); }
+.ann-info { color: var(--text); }
+@media (max-width: 900px) { .map-wrap { grid-template-columns: minmax(0, 1fr); } .map { height: 420px; } }

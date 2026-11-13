@@ -51,6 +51,7 @@ function showTab(name) {
   if (name === "nodes") loadNodes();
   if (name === "channel") loadChannel();
   if (name === "observers") loadObservers();
+  if (name === "map") loadMap();
   store("rradmon.tab", name);
 }
 $$(".tabs button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
@@ -109,6 +110,8 @@ function hashCell(r) {
 }
 function notes(r) {
   const t = [];
+  // What an announce says about itself: name, interface, radio, position known
+  if (r.info) t.push(`<span class="ann-info">${esc(r.info)}</span>`);
   if (r.kind === "orphan") {
     t.push(r.link_id
       ? `<span class="tag warn" title="Likely link: the first proof of an unheard packet within 15 s">never heard whole; delivered, proof ${dur(r.link_delay_ms)} later</span>`
@@ -331,6 +334,7 @@ function throttledRefresh() {
     if (currentTab === "nodes" && Date.now() - lastNodesRefresh > 5000) loadNodes();
     if (currentTab === "channel") loadChannel();
     if (currentTab === "observers") loadObservers();
+    if (currentTab === "map") loadMap();
   }, 2000);
 }
 
@@ -394,16 +398,24 @@ async function loadNodeDetail(id, scroll) {
     <div class="chart" id="rssiChart"></div>
     <div class="chart" id="snrChart"></div>
     <h3>Destinations</h3>
-    <div class="table-wrap"><table><thead><tr><th>Hash</th><th>App</th><th>Name</th><th class="num">Announces</th><th class="num">Hops</th><th>Last seen</th></tr></thead>
-    <tbody>${(d.dests || []).map((x) => `<tr><td class="mono">${short(x.hash, 16)}</td><td>${esc(x.app)}</td><td>${esc(x.name)}</td>
+    <div class="table-wrap"><table><thead><tr><th>Hash</th><th>App</th><th>Name</th><th>Announce says</th><th class="num">Announces</th><th class="num">Hops</th><th>Last seen</th></tr></thead>
+    <tbody>${(d.dests || []).map((x) => `<tr><td class="mono">${short(x.hash, 16)}</td><td>${esc(x.app)}</td><td>${esc(x.name)}</td><td class="notes">${esc(x.info || "")}${x.lat != null ? ` <button class="link" data-map="1" data-lat="${x.lat}" data-lon="${x.lon}">show on map</button>` : ""}</td>
       <td class="num">${x.announces}</td><td class="num">${x.last_hops ?? "–"}</td><td>${ago(x.last_seen)}</td></tr>`).join("") ||
-      '<tr><td colspan="6" class="muted">Seen only as a relay (its transport ID); it has not announced a destination here.</td></tr>'}</tbody></table></div>
+      '<tr><td colspan="7" class="muted">Seen only as a relay (its transport ID); it has not announced a destination here.</td></tr>'}</tbody></table></div>
     <h3>Announce history</h3>
     <div class="table-wrap"><table><thead><tr><th>Time</th><th>App</th><th class="num">Hops</th><th>Signature</th><th class="num">Copies heard</th><th class="num">Last relay after</th></tr></thead>
     <tbody>${(d.announce_history || []).map((a) => `<tr><td>${new Date(a.t).toLocaleString()}</td><td>${esc(a.app.replace(/^rnstransport\./, ""))}</td>
       <td class="num">${a.hops}</td><td>${a.valid === "valid" ? "valid" : `<span class="tag bad">${esc(a.valid)}</span>`}</td>
       <td class="num">${a.copies}</td><td class="num">${a.copies > 1 ? dur(a.max_delay) : "–"}</td></tr>`).join("") ||
       '<tr><td colspan="6" class="muted">No announces from this identity.</td></tr>'}</tbody></table></div>`;
+  $$("[data-map]", el).forEach((b) => (b.onclick = async () => {
+    showTab("map");
+    await loadMap();
+    geo.zoom = 14;
+    const p = project(Number(b.dataset.lat), Number(b.dataset.lon), geo.zoom);
+    geo.cx = p.x; geo.cy = p.y; geo.fitted = true;
+    drawMap();
+  }));
   $("#closeNode").onclick = () => {
     selectedNode = null;
     el.hidden = true;
@@ -418,6 +430,155 @@ async function loadNodeDetail(id, scroll) {
   drawChart(nodeCharts.snr);
   if (scroll && innerWidth < 900) el.scrollIntoView({ behavior: "smooth" });
 }
+
+// ---------- map ----------
+// A small slippy map: Web Mercator, OpenStreetMap tiles (optional), markers
+// for nodes with a known position and for observers. No library needed.
+const TILE = 256;
+const geo = { zoom: 12, cx: 0, cy: 0, fitted: false, data: null, tiles: store("rradmon.tiles") !== "off" };
+function project(lat, lon, z) {
+  const s = TILE * 2 ** z;
+  const sin = Math.sin((Math.max(-85, Math.min(85, lat)) * Math.PI) / 180);
+  return { x: ((lon + 180) / 360) * s, y: (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * s };
+}
+function fitMap() {
+  const d = geo.data;
+  const pts = [...(d?.nodes || []), ...(d?.observers || [])];
+  const el = $("#map");
+  if (!pts.length || !el.clientWidth) return;
+  for (let z = 17; z >= 2; z--) {
+    const ps = pts.map((p) => project(p.lat, p.lon, z));
+    const xs = ps.map((p) => p.x), ys = ps.map((p) => p.y);
+    const w = Math.max(...xs) - Math.min(...xs), h = Math.max(...ys) - Math.min(...ys);
+    if (w < el.clientWidth - 120 && h < el.clientHeight - 120) {
+      geo.zoom = Math.min(z, 15);
+      const zz = geo.zoom;
+      const pz = pts.map((p) => project(p.lat, p.lon, zz));
+      geo.cx = (Math.min(...pz.map((p) => p.x)) + Math.max(...pz.map((p) => p.x))) / 2;
+      geo.cy = (Math.min(...pz.map((p) => p.y)) + Math.max(...pz.map((p) => p.y))) / 2;
+      break;
+    }
+  }
+  geo.fitted = true;
+  drawMap();
+}
+function setZoom(z, ax, ay) {
+  // Zoom about a screen point (ax, ay), keeping it fixed
+  const el = $("#map");
+  z = Math.max(2, Math.min(18, z));
+  if (z === geo.zoom) return;
+  ax ??= el.clientWidth / 2; ay ??= el.clientHeight / 2;
+  const wx = geo.cx - el.clientWidth / 2 + ax, wy = geo.cy - el.clientHeight / 2 + ay;
+  const k = 2 ** (z - geo.zoom);
+  geo.cx = wx * k - ax + el.clientWidth / 2;
+  geo.cy = wy * k - ay + el.clientHeight / 2;
+  geo.zoom = z;
+  drawMap();
+}
+function recency(t) {
+  const age = Date.now() - ms(t);
+  return age < 3600e3 ? "fresh" : age < 86400e3 ? "day" : "old";
+}
+const RECENCY_TEXT = { fresh: "heard in the last hour", day: "heard in the last day", old: "not heard for over a day" };
+function drawMap() {
+  const el = $("#map");
+  const W = el.clientWidth, H = el.clientHeight;
+  if (!W) return;
+  const z = geo.zoom, n = 2 ** z;
+  const left = geo.cx - W / 2, top = geo.cy - H / 2;
+  let html = "";
+  if (geo.tiles) {
+    const x0 = Math.floor(left / TILE), x1 = Math.floor((left + W) / TILE);
+    const y0 = Math.max(0, Math.floor(top / TILE)), y1 = Math.min(n - 1, Math.floor((top + H) / TILE));
+    for (let ty = y0; ty <= y1; ty++) {
+      for (let tx = x0; tx <= x1; tx++) {
+        const wx = ((tx % n) + n) % n;
+        html += `<img class="tile" alt="" draggable="false" style="left:${tx * TILE - left}px;top:${ty * TILE - top}px"
+          src="https://tile.openstreetmap.org/${z}/${wx}/${ty}.png">`;
+      }
+    }
+  }
+  const d = geo.data || { nodes: [], observers: [] };
+  for (const o of d.observers) {
+    const p = project(o.lat, o.lon, z);
+    html += `<div class="mk obs ${esc(o.state)}" style="left:${p.x - left}px;top:${p.y - top}px"
+      data-tip="${esc(`Observer ${o.ext_id} · ${o.state}`)}"><span class="lbl">${esc(o.ext_id)}</span></div>`;
+  }
+  for (const nd of d.nodes) {
+    const p = project(nd.lat, nd.lon, z);
+    const rec = recency(nd.last_seen);
+    const name = nd.name || short(nd.identity, 12);
+    const tip = [name, RECENCY_TEXT[rec], nd.last_rssi != null ? `last ${num(nd.last_rssi, 0)} dBm / ${num(nd.last_snr, 1)} dB` : "",
+      nd.height != null ? `${num(nd.height, 0)} m` : "", `position from ${nd.pos_source} announce`].filter(Boolean).join(" · ");
+    html += `<button class="mk node ${rec}" style="left:${p.x - left}px;top:${p.y - top}px"
+      data-id="${nd.identity}" data-tip="${esc(tip)}"><span class="lbl">${esc(name)}</span></button>`;
+  }
+  $("#mapLayer").innerHTML = html;
+  $("#mapZoom").textContent = `zoom ${z}`;
+}
+async function loadMap() {
+  geo.data = await api("/api/map");
+  const d = geo.data;
+  $("#mapSummary").innerHTML = `${d.nodes.length} node${d.nodes.length === 1 ? "" : "s"} placed` +
+    (d.unplaced ? ` · ${d.unplaced} without a known position` : "") +
+    ` · ${d.observers.length} observer${d.observers.length === 1 ? "" : "s"} placed`;
+  $("#mapList").innerHTML = d.nodes.map((nd) => `<li><button class="link" data-id="${nd.identity}">${esc(nd.name || short(nd.identity, 12))}</button>
+    <span class="muted small">${esc(nd.info || "")}</span></li>`).join("") || '<li class="muted">No node has announced a position yet. Interface-discovery announces carry one.</li>';
+  if (!geo.fitted) fitMap(); else drawMap();
+}
+(function mapEvents() {
+  const el = $("#map");
+  let drag = null;
+  el.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".mk, .map-ctl")) return;
+    drag = { x: e.clientX, y: e.clientY, cx: geo.cx, cy: geo.cy };
+    el.setPointerCapture(e.pointerId);
+    el.classList.add("dragging");
+  });
+  el.addEventListener("pointermove", (e) => {
+    if (drag) {
+      geo.cx = drag.cx - (e.clientX - drag.x);
+      geo.cy = drag.cy - (e.clientY - drag.y);
+      drawMap();
+      return;
+    }
+    const mk = e.target.closest(".mk");
+    const tip = $("#tip");
+    if (mk) {
+      tip.textContent = mk.dataset.tip;
+      tip.hidden = false;
+      tip.style.left = `${Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8)}px`;
+      tip.style.top = `${e.clientY + 14}px`;
+    } else tip.hidden = true;
+  });
+  const end = () => { drag = null; el.classList.remove("dragging"); };
+  el.addEventListener("pointerup", end);
+  el.addEventListener("pointercancel", end);
+  el.addEventListener("pointerleave", () => ($("#tip").hidden = true));
+  el.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const r = el.getBoundingClientRect();
+    setZoom(geo.zoom + (e.deltaY < 0 ? 1 : -1), e.clientX - r.left, e.clientY - r.top);
+  }, { passive: false });
+  el.addEventListener("click", (e) => {
+    const mk = e.target.closest(".mk.node");
+    if (mk) openNode(mk.dataset.id);
+  });
+  // Offline or blocked tiles: drop them and let the grid show (inline
+  // onerror handlers would be blocked by the page's content security policy)
+  $("#mapLayer").addEventListener("error", (e) => { if (e.target.tagName === "IMG") e.target.remove(); }, true);
+  $("#mapIn").onclick = () => setZoom(geo.zoom + 1);
+  $("#mapOut").onclick = () => setZoom(geo.zoom - 1);
+  $("#mapFit").onclick = () => fitMap();
+  const tiles = $("#mapTiles");
+  tiles.checked = geo.tiles;
+  tiles.onchange = () => { geo.tiles = tiles.checked; store("rradmon.tiles", geo.tiles ? "on" : "off"); drawMap(); };
+  $("#mapList").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-id]");
+    if (b) openNode(b.dataset.id);
+  });
+  addEventListener("resize", () => { if (currentTab === "map") drawMap(); });
+})();
 
 // ---------- channel ----------
 let chanHours = Number(store("rradmon.chanHours")) || 1;

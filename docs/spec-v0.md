@@ -192,6 +192,19 @@ reachable on, 0x03 latitude, 0x04 longitude, 0x05 height, 0x06 port,
 data, unencrypted, sent as a split packet). This is Phase 3's position
 source; positions are real locations, so keep such captures out of the repo.
 
+Built 2026-11-13 (`reticulum.DescribeAnnounce`, a bounded msgpack decoder):
+every announce's app data is summarised in one line for the live view and
+the node page. Discovery: name, interface, implementation and version, radio
+settings, reachable-on and IFAC network name when present, and "position"
+with height (never the coordinates in the summary). LXMF delivery: display
+name and stamp cost. NomadNet and other printable app data: the text.
+A valid discovery announce sets its destination's lat, lon, height and
+`pos_source = 'discovery'`; the newest announce wins. The map shows each node
+at its newest announced position, and observers at the position they report
+(`rradmon run -lat -lon` for a local RNode, `observe -lat -lon`, Rrobs
+`RROBS_LAT/LON`). Map tiles come from OpenStreetMap and can be turned off.
+Manual pins need a write API and so wait for admin login (Phase 4).
+
 Verified on the bench corpus (`testdata/rig-corpus1.jsonl`): all 7 proofs
 match the truncated hash of an earlier packet (probes, split probes and link
 requests), link traffic is addressed to the link request's truncated hash, all

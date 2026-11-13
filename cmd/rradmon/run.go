@@ -38,6 +38,8 @@ func runRun(args []string) error {
 	quiet := fs.Bool("quiet", false, "do not print each packet")
 	dur := fs.Duration("for", 0, "stop after this long (0 = until Ctrl+C)")
 	httpAddr := fs.String("http", "127.0.0.1:8080", "web UI address (empty to disable)")
+	lat := fs.Float64("lat", 0, "position of the local RNode (optional, shown on the map)")
+	lon := fs.Float64("lon", 0, "position of the local RNode (optional)")
 	broker := brokerFlags(fs)
 	allow := fs.String("mqtt-allow", "", "comma-separated observer ids to accept (default all)")
 	fs.Parse(args)
@@ -129,7 +131,7 @@ func runRun(args []string) error {
 		fmt.Fprintf(os.Stderr, "%s.\n", fw)
 		local := "rnode:" + *port
 		if err := st.ObserverStatus(local, "rnode-serial", time.Now(), store.ObserverState{
-			Online: true, Firmware: fw, Software: "rradmon " + version}); err != nil {
+			Online: true, Firmware: fw, Software: "rradmon " + version, Lat: optPos(*lat, *lon), Lon: optPos(*lon, *lat)}); err != nil {
 			return err
 		}
 		defer func() {
@@ -370,4 +372,12 @@ func printSummary(st *store.Store) error {
 		q(`SELECT COUNT(*) FROM announces`), q(`SELECT COUNT(*) FROM frame_errors`),
 		q(`SELECT COUNT(*) FROM channel_stats`))
 	return nil
+}
+
+// optPos returns &v when a position was given (not both zero).
+func optPos(v, other float64) *float64 {
+	if v == 0 && other == 0 {
+		return nil
+	}
+	return &v
 }

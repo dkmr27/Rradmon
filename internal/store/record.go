@@ -200,7 +200,7 @@ func recordAnnounce(tx *sql.Tx, r Reception, out Recorded) error {
 		count = 1
 	}
 	appName := reticulum.WellKnownName(a.NameHash)
-	display := reticulum.DisplayName(a.NameHash, a.AppData)
+	info := reticulum.DescribeAnnounce(a.NameHash, a.AppData)
 	_, err := tx.Exec(`INSERT INTO destinations (hash, identity_hash, name_hash, app_name, display_name,
 		first_seen, last_seen, announce_count, last_hops) VALUES (?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(hash) DO UPDATE SET
@@ -209,8 +209,75 @@ func recordAnnounce(tx *sql.Tx, r Reception, out Recorded) error {
 			display_name = COALESCE(excluded.display_name, display_name),
 			app_name = COALESCE(excluded.app_name, app_name),
 			last_hops = CASE WHEN ? THEN excluded.last_hops ELSE MIN(last_hops, excluded.last_hops) END`,
-		a.Dest, a.IdentityHash, a.NameHash, nullStr(appName), nullStr(display), t, t, count, r.Packet.Hops, out.New)
-	return err
+		a.Dest, a.IdentityHash, a.NameHash, nullStr(appName), nullStr(info.Name), t, t, count, r.Packet.Hops, out.New)
+	if err != nil {
+		return err
+	}
+	return applyAnnounceInfo(tx, a.Dest, t, info)
+}
+
+// applyAnnounceInfo stores an announce's summary and, for an interface-
+// discovery announce with a position, the destination's position. Only a
+// newer announce replaces what is there.
+func applyAnnounceInfo(tx *sql.Tx, dest []byte, t int64, info reticulum.AnnounceInfo) error {
+	if _, err := tx.Exec(`UPDATE destinations SET info = ?, info_t = ?
+		WHERE hash = ? AND (info_t IS NULL OR info_t <= ?)`, nullStr(info.Summary), t, dest, t); err != nil {
+		return err
+	}
+	if d := info.Discovery; d != nil && d.Lat != nil && d.Lon != nil {
+		_, err := tx.Exec(`UPDATE destinations SET lat = ?, lon = ?, height = ?, pos_source = 'discovery'
+			WHERE hash = ? AND info_t = ?`, *d.Lat, *d.Lon, d.Height, dest, t)
+		return err
+	}
+	return nil
+}
+
+// backfillAnnounceInfo fills info (and discovery positions) for destinations
+// stored before it was kept, from each one's latest valid announce.
+func (s *Store) backfillAnnounceInfo() error {
+	rows, err := s.DB.Query(`SELECT d.hash, a.name_hash, a.app_data, a.t_rx FROM destinations d
+		JOIN announces a ON a.id = (SELECT id FROM announces WHERE dest_hash = d.hash AND sig_valid = 1
+			ORDER BY t_rx DESC LIMIT 1)
+		WHERE d.info_t IS NULL`)
+	if err != nil {
+		return err
+	}
+	type item struct {
+		dest []byte
+		t    int64
+		info reticulum.AnnounceInfo
+	}
+	var items []item
+	for rows.Next() {
+		var dest, nameHash, appData []byte
+		var t int64
+		if err := rows.Scan(&dest, &nameHash, &appData, &t); err != nil {
+			rows.Close()
+			return err
+		}
+		info := reticulum.DescribeAnnounce(nameHash, appData)
+		items = append(items, item{dest, t, info})
+	}
+	rows.Close()
+	if len(items) == 0 {
+		return nil
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, it := range items {
+		if it.info.Name != "" {
+			if _, err := tx.Exec(`UPDATE destinations SET display_name = ? WHERE hash = ?`, it.info.Name, it.dest); err != nil {
+				return err
+			}
+		}
+		if err := applyAnnounceInfo(tx, it.dest, it.t, it.info); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func nodeStats(tx *sql.Tx, ident []byte, obs int64, t time.Time, rssi, snr float32, announce bool) error {

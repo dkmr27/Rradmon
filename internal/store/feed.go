@@ -57,7 +57,11 @@ type PacketRow struct {
 	LinkDelayMs   int64 `json:"link_delay_ms,omitempty"`
 
 	// Orphan rows
-	OrphanKind     string   `json:"orphan_kind,omitempty"`
+	OrphanKind string `json:"orphan_kind,omitempty"`
+
+	// Announce rows: what its app data says, in one line (name, interface,
+	// radio settings, position known)
+	Info           string   `json:"info,omitempty"`
 	GroupObservers []string `json:"group_observers,omitempty"`
 }
 
@@ -96,12 +100,13 @@ func (s *Store) PacketFeed(before, after time.Time, hashPrefix string, limit int
 			(SELECT COUNT(*) FROM receptions WHERE packet_id = p.id AND partial > 0),
 			(SELECT MAX(delay_ms) FROM receptions WHERE packet_id = p.id),
 			(SELECT group_concat(id) FROM frame_errors WHERE matched_packet_id = p.id),
-			d.display_name, d.app_name
+			d.display_name, d.app_name, a.name_hash, a.app_data
 		FROM packets p
 		JOIN receptions r ON r.id = (SELECT id FROM receptions WHERE packet_id = p.id
 			ORDER BY partial > 0, t_rx, id LIMIT 1)
 		JOIN observers o ON o.id = r.observer_id
 		LEFT JOIN destinations d ON d.hash = p.dest_hash
+		LEFT JOIN announces a ON a.packet_id = p.id
 		WHERE `+where+` ORDER BY p.first_seen `+order+`, p.id `+order+` LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
@@ -117,11 +122,12 @@ func (s *Store) PacketFeed(before, after time.Time, hashPrefix string, limit int
 			linkID, linkDelay, maxD sql.NullInt64
 			absorbed                sql.NullString
 			dname, aname            sql.NullString
+			annNameHash, annData    []byte
 		)
 		if err := rows.Scan(&r.ID, &first, &last, &ptype, &dtype, &dest, &r.Len, &hash, &full,
 			&r.Repeat, &r.ProvesUnheard, &linkID, &linkDelay,
 			&r.Observer, &r.FirstObs, &r.RSSI, &r.SNR, &r.Hops, &via, &r.Frames, &tx,
-			&r.Receptions, &r.Observers, &r.Partials, &maxD, &absorbed, &dname, &aname); err != nil {
+			&r.Receptions, &r.Observers, &r.Partials, &maxD, &absorbed, &dname, &aname, &annNameHash, &annData); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -130,6 +136,9 @@ func (s *Store) PacketFeed(before, after time.Time, hashPrefix string, limit int
 		r.Dest, r.Hash, r.FullHash, r.Via, r.Tx = hx(dest), hx(hash), hx(full), hx(via), hx(tx)
 		r.LinkID, r.LinkDelayMs, r.MaxDelayMs = linkID.Int64, linkDelay.Int64, maxD.Int64
 		r.DestName, r.AppName = dname.String, aname.String
+		if annNameHash != nil {
+			r.Info = reticulum.DescribeAnnounce(annNameHash, annData).Summary
+		}
 		if r.AppName == "" {
 			r.AppName = reticulum.WellKnownPlain(dest)
 		}
