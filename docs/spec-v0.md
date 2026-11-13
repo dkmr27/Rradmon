@@ -68,8 +68,31 @@ different offset and its halves will not match the original's halves. Matching
 works per transmission: an orphan matches the whole copy with the same bytes.
 That is enough for "observer B heard half of what observer A heard whole".
 
-Status: Phase 1 stretch goal. The schema carries `partial` and the frame hashes
-from day one so it can be added without a migration.
+Status: built in Phase 1.
+
+### Partly heard transmissions (built 2026-11-13)
+
+When no observer hears a split packet whole, its halves cannot become
+partial receptions. Instead:
+
+- **Orphan groups:** unmatched orphans with the same frame hash within 10 s
+  are one transmission heard by several observers; they share `group_id`
+  (the first orphan's id). The feed shows one row per group, listing the
+  observers, and a first half's header (type, destination, hops).
+- **Proofs of unheard packets:** a PROOF names the packet it proves
+  (`Packet.ProvedHash`: the destination for SINGLE proofs and link-request
+  proofs; the first 16 bytes of the data for link packet proofs, which RNS
+  sends unencrypted as packet hash + signature; none for resource proofs).
+  If no packet with that hash was heard, the proof gets `proves_unheard`.
+- **Likely link:** such a proof is linked to the latest unlinked orphan group
+  in the 15 s before it (`packets.proves_orphan`, `frame_errors.proof_packet_id`),
+  in either arrival order. This is a heuristic, shown as "likely" in the UI.
+  When the group has a first half, its destination's identity attributes the
+  proof's transmitter.
+
+Seen on the bench: a split probe from rnsd reached both observers only as its
+first half, yet Rrptr proved it 0.7 s later; another reached both only as its
+second half and was never answered (rnprobe timed out).
 
 ## 2. RNode host protocol in promiscuous mode
 

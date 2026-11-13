@@ -63,7 +63,7 @@ func File(r io.Reader) ([]Item, error) {
 					it.Announce, it.Err = reticulum.ParseAnnounce(p)
 				}
 				if p.Type == reticulum.TypeProof {
-					if i, ok := byHash[string(p.Dest)]; ok {
+					if i, ok := byHash[string(p.ProvedHash())]; ok {
 						it.ProofFor = i
 					}
 				}

@@ -83,15 +83,30 @@ const MAX_ROWS = 600;
 function typeFilter() { return new Set($$("#typeFilter input:checked").map((i) => i.value)); }
 
 function destCell(r) {
-  if (r.kind === "orphan") return `<span class="muted">${esc(r.orphan_kind)}</span>`;
   const label = r.dest_name || r.app_name;
+  if (r.kind === "orphan") {
+    // A first half carries its packet's header, so say what it was
+    if (r.dest) return `<span class="muted">${esc(r.orphan_kind)} of ${esc(r.type)} to</span> <span class="mono">${short(r.dest, 12)}</span>${label ? ` <span class="muted">${esc(label)}</span>` : ""}`;
+    return `<span class="muted">${esc(r.orphan_kind)}</span>`;
+  }
   return `<span class="mono">${short(r.dest, 12)}</span>${label ? ` <span class="muted">${esc(label)}</span>` : ""} <span class="muted">${esc(r.dest_type)}</span>`;
 }
 function notes(r) {
   const t = [];
   if (r.frames === 2) t.push(`<span class="tag">split</span>`);
   if (r.partial) t.push(`<span class="tag warn">partial: ${r.partial === 1 ? "first" : "second"} half only</span>`);
-  if (r.kind === "orphan") t.push(`<span class="tag bad">no matching packet</span>`);
+  if (r.kind === "orphan") {
+    const obs = r.group_observers || [r.observer];
+    t.push(obs.length > 1 ? `heard by ${obs.length} observers (${obs.map(esc).join(", ")})` : `heard only by ${esc(obs[0])}`);
+    t.push(r.link_id
+      ? `<span class="tag warn" title="Likely link: the first proof of an unheard packet within 15 s">never heard whole; delivered, proof ${dur(r.link_delay_ms)} later</span>`
+      : `<span class="tag bad">never heard whole</span>`);
+  }
+  if (r.proves_unheard) {
+    t.push(r.link_id
+      ? `<span class="tag warn" title="Likely link: the latest partly heard transmission within 15 s before">proves a packet only partly heard, ${dur(r.link_delay_ms)} earlier</span>`
+      : `<span class="tag warn">proves a packet no observer heard</span>`);
+  }
   if (r.delay_ms) t.push(`again after ${dur(r.delay_ms)}`);
   if (r.repeat) t.push(`<span class="tag">repeat</span>`);
   if (r.via) t.push(`via <span class="mono">${short(r.via)}</span>`);
@@ -125,6 +140,18 @@ function addRows(rows, { atTop, flash }) {
     const key = `${r.kind}:${r.id}`;
     if (feed.rows.has(key)) continue;
     feed.rows.set(key, r);
+    // A proof that links back to an orphan already on screen: update that row
+    if (r.proves_unheard && r.link_id) {
+      const o = feed.rows.get(`orphan:${r.link_id}`);
+      const old = o && document.querySelector(`#feedBody tr[data-key="orphan:${r.link_id}"]`);
+      if (o && old && !o.link_id) {
+        o.link_id = r.packet_id;
+        o.link_delay_ms = r.link_delay_ms;
+        const fresh = feedRow(o);
+        fresh.hidden = old.hidden;
+        old.replaceWith(fresh);
+      }
+    }
     const tr = feedRow(r);
     tr.hidden = !f.has(tr.dataset.type);
     if (flash) tr.classList.add("new");

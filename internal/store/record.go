@@ -95,6 +95,15 @@ func (s *Store) RecordReception(r Reception) (Recorded, error) {
 	if err != nil {
 		return out, err
 	}
+	if out.New && p.Type == reticulum.TypeProof {
+		ident, err := checkProof(tx, r, out.PacketID)
+		if err != nil {
+			return out, err
+		}
+		if out.TxIdentity == nil {
+			out.TxIdentity = ident
+		}
+	}
 	if out.New && out.TxIdentity != nil {
 		if _, err := tx.Exec(`UPDATE packets SET tx_identity = ? WHERE id = ?`, out.TxIdentity, out.PacketID); err != nil {
 			return out, err
@@ -148,7 +157,8 @@ func attribute(tx *sql.Tx, r Reception, p *reticulum.Packet) ([]byte, error) {
 			return r.Announce.IdentityHash, nil
 		}
 	case reticulum.TypeProof:
-		if p.Hops != 0 {
+		proved := p.ProvedHash()
+		if p.Hops != 0 || proved == nil {
 			return nil, nil
 		}
 		var ident []byte
@@ -156,7 +166,7 @@ func attribute(tx *sql.Tx, r Reception, p *reticulum.Packet) ([]byte, error) {
 			JOIN destinations d ON d.hash = pk.dest_hash
 			WHERE pk.network_id = ? AND pk.hash = ? AND pk.first_seen >= ?
 			ORDER BY pk.first_seen DESC LIMIT 1`,
-			r.NetworkID, p.Dest, ms(r.T.Add(-r.WindowOther))).Scan(&ident)
+			r.NetworkID, proved, ms(r.T.Add(-r.WindowOther))).Scan(&ident)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -270,7 +280,125 @@ func (s *Store) RecordOrphan(o Orphan) (int64, error) {
 			}
 		}
 	}
+	if pid == 0 {
+		if err := groupOrphan(tx, o, feID); err != nil {
+			return 0, err
+		}
+	}
 	return pid, tx.Commit()
+}
+
+const (
+	// Identical orphans this close in time are one transmission heard by
+	// several observers (MQTT delivery can lag by seconds).
+	orphanGroupWindow = 10 * time.Second
+	// A proof of an unheard packet is linked to an orphan group heard at most
+	// this long before it: a split frame's airtime plus the receiver's
+	// processing and its own transmit.
+	proofLinkWindow = 15 * time.Second
+)
+
+// groupOrphan puts an unmatched orphan in a group with identical orphans
+// from other observers, and links the group to a proof of an unheard packet
+// that came after it, if there is one.
+func groupOrphan(tx *sql.Tx, o Orphan, feID int64) error {
+	group := feID
+	var proof sql.NullInt64
+	if o.FrameHash != nil {
+		var g int64
+		err := tx.QueryRow(`SELECT COALESCE(group_id, id), proof_packet_id FROM frame_errors
+			WHERE frame_hash = ? AND id <> ? AND matched_packet_id IS NULL AND t BETWEEN ? AND ?
+			ORDER BY t LIMIT 1`, o.FrameHash, feID,
+			ms(o.T.Add(-orphanGroupWindow)), ms(o.T.Add(orphanGroupWindow))).Scan(&g, &proof)
+		switch {
+		case err == nil:
+			group = g
+		case !errors.Is(err, sql.ErrNoRows):
+			return err
+		}
+	}
+	if _, err := tx.Exec(`UPDATE frame_errors SET group_id = ?, proof_packet_id = ? WHERE id = ?`,
+		group, proof, feID); err != nil {
+		return err
+	}
+	if proof.Valid || o.FrameHash == nil {
+		return nil
+	}
+	// The proof may have been stored before this orphan arrived (another
+	// observer's MQTT messages can come first).
+	var pp int64
+	err := tx.QueryRow(`SELECT id FROM packets WHERE network_id = ? AND pkt_type = ? AND proves_unheard = 1
+		AND proves_orphan IS NULL AND first_seen BETWEEN ? AND ? ORDER BY first_seen LIMIT 1`,
+		o.NetworkID, reticulum.TypeProof, ms(o.T), ms(o.T.Add(proofLinkWindow))).Scan(&pp)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return linkProofToGroup(tx, pp, group)
+}
+
+func linkProofToGroup(tx *sql.Tx, proofID, group int64) error {
+	if _, err := tx.Exec(`UPDATE frame_errors SET proof_packet_id = ? WHERE COALESCE(group_id, id) = ?`,
+		proofID, group); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`UPDATE packets SET proves_orphan = ? WHERE id = ?`, group, proofID)
+	return err
+}
+
+// checkProof runs for a newly stored PROOF. If no observer heard the packet
+// it proves, the proof is flagged and linked to the most likely partly heard
+// transmission before it. Returns the transmitter, if the linked orphan's
+// header names a destination whose identity is known.
+func checkProof(tx *sql.Tx, r Reception, proofID int64) ([]byte, error) {
+	p := r.Packet
+	proved := p.ProvedHash()
+	if proved == nil {
+		return nil, nil // a resource proof, or one that does not name its packet
+	}
+	var known int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM packets WHERE network_id = ? AND hash = ? AND first_seen >= ?`,
+		r.NetworkID, proved, ms(r.T.Add(-r.WindowOther))).Scan(&known); err != nil {
+		return nil, err
+	}
+	if known > 0 {
+		return nil, nil
+	}
+	if _, err := tx.Exec(`UPDATE packets SET proves_unheard = 1 WHERE id = ?`, proofID); err != nil {
+		return nil, err
+	}
+	var group int64
+	var head []byte
+	err := tx.QueryRow(`SELECT COALESCE(group_id, id), data FROM frame_errors
+		WHERE frame_hash IS NOT NULL AND matched_packet_id IS NULL AND proof_packet_id IS NULL
+		AND id = COALESCE(group_id, id) AND t BETWEEN ? AND ?
+		ORDER BY t DESC LIMIT 1`, ms(r.T.Add(-proofLinkWindow)), ms(r.T)).Scan(&group, &head)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := linkProofToGroup(tx, proofID, group); err != nil {
+		return nil, err
+	}
+	// A first half carries the packet's header: the proof comes from the
+	// owner of that destination, when it has announced.
+	if p.Hops != 0 || len(head) == 0 {
+		return nil, nil
+	}
+	hp, err := reticulum.Parse(head)
+	if err != nil {
+		return nil, nil
+	}
+	var ident []byte
+	err = tx.QueryRow(`SELECT identity_hash FROM destinations WHERE hash = ?`, hp.Dest).Scan(&ident)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return ident, err
 }
 
 // matchEarlierOrphans links orphans heard before the whole packet arrived.

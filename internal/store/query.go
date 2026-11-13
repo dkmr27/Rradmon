@@ -99,6 +99,16 @@ type FeedRow struct {
 	DestName   string    `json:"dest_name,omitempty"`
 	AppName    string    `json:"app_name,omitempty"`
 	OrphanKind string    `json:"orphan_kind,omitempty"`
+
+	// Proof rows: no observer heard the proved packet whole.
+	ProvesUnheard bool `json:"proves_unheard,omitempty"`
+	// Orphan rows: every observer that heard this same orphaned frame.
+	GroupObservers []string `json:"group_observers,omitempty"`
+	// Link between a partly heard transmission and the proof that it was
+	// delivered (likely, see schema migration 3): on a proof row the orphan
+	// group's id, on an orphan row the proof's packet id; and the time between.
+	LinkID      int64 `json:"link_id,omitempty"`
+	LinkDelayMs int64 `json:"link_delay_ms,omitempty"`
 }
 
 // Feed returns the newest receptions and unmatched orphans before a time,
@@ -117,15 +127,20 @@ func (s *Store) feed(cmp, order string, t0 time.Time, limit int) ([]FeedRow, err
 	rows, err := s.DB.Query(`
 		SELECT 'rx', r.id, p.id, r.t_rx, o.ext_id, r.rssi, r.snr, p.pkt_type, p.dest_type, p.dest_hash,
 			r.hops, r.transport_id, p.data_len, r.frames, r.partial, r.delay_ms, p.repeat_of IS NOT NULL,
-			r.tx_identity, d.display_name, d.app_name, NULL
+			r.tx_identity, d.display_name, d.app_name, NULL,
+			COALESCE(p.proves_unheard, 0), NULL, p.proves_orphan,
+			p.first_seen - (SELECT t FROM frame_errors WHERE id = p.proves_orphan), NULL
 		FROM receptions r JOIN packets p ON p.id = r.packet_id JOIN observers o ON o.id = r.observer_id
 		LEFT JOIN destinations d ON d.hash = p.dest_hash
 		WHERE r.t_rx `+cmp+` ?
 		UNION ALL
 		SELECT 'orphan', f.id, NULL, f.t, o.ext_id, f.rssi, f.snr, NULL, NULL, NULL,
-			NULL, NULL, f.len, 1, 0, 0, 0, NULL, NULL, NULL, f.kind
+			NULL, NULL, f.len, 1, 0, 0, 0, NULL, NULL, NULL, f.kind,
+			0, (SELECT group_concat(DISTINCT o2.ext_id) FROM frame_errors g JOIN observers o2 ON o2.id = g.observer_id
+				WHERE COALESCE(g.group_id, g.id) = f.id),
+			f.proof_packet_id, (SELECT first_seen FROM packets WHERE id = f.proof_packet_id) - f.t, f.data
 		FROM frame_errors f JOIN observers o ON o.id = f.observer_id
-		WHERE f.matched_packet_id IS NULL AND f.t `+cmp+` ?
+		WHERE f.matched_packet_id IS NULL AND f.id = COALESCE(f.group_id, f.id) AND f.t `+cmp+` ?
 		ORDER BY 4 `+order+`, 2 `+order+` LIMIT ?`, ms(t0), ms(t0), limit)
 	if err != nil {
 		return nil, err
@@ -133,6 +148,7 @@ func (s *Store) feed(cmp, order string, t0 time.Time, limit int) ([]FeedRow, err
 	defer rows.Close()
 	var out []FeedRow
 	names := map[string]string{}
+	var dests []int // orphan rows whose destination name is looked up below
 	for rows.Next() {
 		var (
 			f                   FeedRow
@@ -141,9 +157,13 @@ func (s *Store) feed(cmp, order string, t0 time.Time, limit int) ([]FeedRow, err
 			ptype, dtype        sql.NullInt64
 			dest, via, tx       []byte
 			dname, aname, okind sql.NullString
+			groupObs            sql.NullString
+			linkID, linkDelay   sql.NullInt64
+			head                []byte
 		)
 		if err := rows.Scan(&f.Kind, &f.ID, &pid, &t, &f.Observer, &f.RSSI, &f.SNR, &ptype, &dtype, &dest,
-			&f.Hops, &via, &f.Len, &f.Frames, &f.Partial, &f.DelayMs, &f.Repeat, &tx, &dname, &aname, &okind); err != nil {
+			&f.Hops, &via, &f.Len, &f.Frames, &f.Partial, &f.DelayMs, &f.Repeat, &tx, &dname, &aname, &okind,
+			&f.ProvesUnheard, &groupObs, &linkID, &linkDelay, &head); err != nil {
 			return nil, err
 		}
 		f.PacketID, f.T = pid.Int64, fromMs(t)
@@ -156,12 +176,34 @@ func (s *Store) feed(cmp, order string, t0 time.Time, limit int) ([]FeedRow, err
 		if f.AppName == "" && dest != nil {
 			f.AppName = reticulum.WellKnownPlain(dest)
 		}
+		f.LinkID, f.LinkDelayMs = linkID.Int64, linkDelay.Int64
+		if groupObs.Valid && groupObs.String != "" {
+			f.GroupObservers = strings.Split(groupObs.String, ",")
+		}
+		// A first half carries the packet's header: show what it was.
+		if f.Kind == "orphan" && len(head) > 0 {
+			if hp, err := reticulum.Parse(head); err == nil {
+				f.Type, f.DestType, f.Dest = hp.Type.String(), hp.DestType.String(), hx(hp.Dest)
+				h := int64(hp.Hops)
+				f.Hops = &h
+				if hp.Header2 {
+					f.Via = hx(hp.TransportID)
+				}
+				dests = append(dests, len(out))
+			}
+		}
 		out = append(out, f)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	rows.Close() // one connection: finish this query before the name lookups
+	for _, i := range dests {
+		b, _ := hex.DecodeString(out[i].Dest)
+		var dn, an sql.NullString
+		s.DB.QueryRow(`SELECT display_name, app_name FROM destinations WHERE hash = ?`, b).Scan(&dn, &an)
+		out[i].DestName, out[i].AppName = dn.String, an.String
+	}
 	for i := range out {
 		if tx := out[i].Tx; tx != "" {
 			if _, ok := names[tx]; !ok {

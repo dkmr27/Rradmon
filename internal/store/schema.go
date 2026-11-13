@@ -167,4 +167,16 @@ ALTER TABLE observers ADD COLUMN software    TEXT;
 ALTER TABLE observers ADD COLUMN status_t    INTEGER;  -- when the last status arrived
 ALTER TABLE observers ADD COLUMN status_json TEXT;     -- the last status message, as received
 `,
+	// 3: partly heard transmissions. Identical unmatched orphans heard by
+	// several observers share a group (the first orphan's id). A PROOF whose
+	// packet no observer heard whole is flagged, and linked to the orphan
+	// group it most likely proves (a heuristic: the latest unlinked group in
+	// the 15 s before the proof).
+	`
+ALTER TABLE frame_errors ADD COLUMN group_id INTEGER;
+ALTER TABLE frame_errors ADD COLUMN proof_packet_id INTEGER REFERENCES packets(id) ON DELETE SET NULL;
+ALTER TABLE packets ADD COLUMN proves_unheard INTEGER;
+ALTER TABLE packets ADD COLUMN proves_orphan INTEGER;
+CREATE INDEX frame_errors_group ON frame_errors(group_id);
+`,
 }

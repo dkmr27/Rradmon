@@ -136,6 +136,36 @@ func (p *Packet) TruncatedHash() []byte {
 	return h[:HashLen]
 }
 
+// Contexts that matter for proofs.
+const (
+	ContextResourceProof = 0x05
+	ContextLRProof       = 0xFF
+)
+
+// ProvedHash is the truncated hash of the packet a PROOF proves, or nil if
+// this is not a proof or the proof does not name its packet:
+//   - SINGLE destination (an explicit proof, e.g. of a probe): the proof is
+//     addressed to the proved packet's truncated hash;
+//   - LINK destination with context LRPROOF: addressed to the link ID, which
+//     is the link request's truncated hash;
+//   - other LINK proofs: not encrypted, and the data starts with the proved
+//     packet's full hash (RNS Link.prove_packet), then the signature;
+//   - resource proofs name a resource, not a packet.
+func (p *Packet) ProvedHash() []byte {
+	if p.Type != TypeProof {
+		return nil
+	}
+	switch {
+	case p.DestType == DestSingle:
+		return p.Dest
+	case p.DestType == DestLink && p.Context == ContextLRProof:
+		return p.Dest
+	case p.DestType == DestLink && p.Context != ContextResourceProof && len(p.Data) >= 32+64:
+		return p.Data[:HashLen]
+	}
+	return nil
+}
+
 func (p *Packet) String() string {
 	s := fmt.Sprintf("%s %s hops=%d dst=%x", p.Type, p.DestType, p.Hops, p.Dest)
 	if p.Header2 {

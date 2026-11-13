@@ -109,3 +109,37 @@ func TestShortAndIFAC(t *testing.T) {
 		t.Errorf("IFAC: %v %v", p, err)
 	}
 }
+
+func TestProvedHash(t *testing.T) {
+	dest := bytes.Repeat([]byte{0xAA}, 16)
+	full := bytes.Repeat([]byte{0xBB}, 32)
+	sig := make([]byte, 64)
+	mk := func(flags, ctx byte, data []byte) *Packet {
+		raw := append([]byte{flags, 0}, dest...)
+		raw = append(raw, ctx)
+		p, err := Parse(append(raw, data...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	proofSingle := byte(TypeProof)                   // single destination
+	proofLink := byte(TypeProof) | byte(DestLink)<<2 // link destination
+	cases := []struct {
+		name string
+		p    *Packet
+		want []byte
+	}{
+		{"explicit proof (probe)", mk(proofSingle, 0, sig), dest},
+		{"link request proof", mk(proofLink, ContextLRProof, sig), dest},
+		{"link packet proof", mk(proofLink, 0, append(append([]byte{}, full...), sig...)), full[:16]},
+		{"resource proof", mk(proofLink, ContextResourceProof, append(append([]byte{}, full...), sig...)), nil},
+		{"short link proof", mk(proofLink, 0, sig), nil},
+		{"not a proof", mk(0, 0, sig), nil},
+	}
+	for _, c := range cases {
+		if got := c.p.ProvedHash(); !bytes.Equal(got, c.want) {
+			t.Errorf("%s: got %x, want %x", c.name, got, c.want)
+		}
+	}
+}
