@@ -97,15 +97,30 @@ const rowType = (r) => (r.kind === "orphan" ? "orphan" : r.type);
 const framesCode = (r) => (r.kind === "orphan" ? "O" : r.frames === 2 ? "D" : "S");
 const FRAMES_TITLE = { S: "Single LoRa frame", D: "Double: both frames of a split packet", O: "Orphan: one half of a split packet heard alone" };
 
+// A full hash that copies itself when clicked
+function copyHash(hex, title = "Click to copy") {
+  if (!hex) return "";
+  return `<button class="hash mono" data-hash="${esc(hex)}" title="${esc(title)}">${esc(hex)}</button>`;
+}
+// Destination: the full 16-byte hash (copyable), then its display name if known
 function destCell(r) {
-  const label = r.dest_name || r.app_name;
-  const name = label ? ` <span class="muted">${esc(label)}</span>` : "";
+  const name = r.dest_name ? ` <span class="muted">${esc(r.dest_name)}</span>` : "";
   if (r.kind === "orphan") {
     // A first half carries its packet's header, so say what it was
-    if (r.dest) return `<span class="muted">${esc(r.orphan_kind)} of ${esc(r.type)} to</span> <span class="mono">${short(r.dest, 12)}</span>${name}`;
+    if (r.dest) return `<span class="muted">${esc(r.orphan_kind)} of ${esc(r.type)} to</span> ${copyHash(r.dest)}${name}`;
     return `<span class="muted">${esc(r.orphan_kind)}</span>`;
   }
-  return `<span class="mono">${short(r.dest, 12)}</span>${name} <span class="muted">${esc(r.dest_type)}</span>`;
+  return `${copyHash(r.dest)}${name}`;
+}
+// Aspect: the app aspect (when known) and the destination type
+function aspectCell(r) {
+  if (!r.dest) return "";
+  // Links and proofs are not addressed to an app destination: a link packet
+  // goes to the link ID, a packet proof to the hash of the packet it proves
+  if (r.dest_type === "link") return '<span class="muted" title="Addressed to a link ID">link</span>';
+  if (r.type === "PROOF") return '<span class="muted" title="Addressed to the hash of the packet it proves">packet proof</span>';
+  const aspect = r.app_name ? esc(r.app_name) : '<span class="muted">unknown</span>';
+  return `${aspect}${r.dest_type ? ` <span class="muted">${esc(r.dest_type)}</span>` : ""}`;
 }
 function fromCell(tx, name) {
   return tx ? `<a class="node" href="#node=${tx}">${esc(name) || `<span class="mono">${short(tx)}</span>`}</a>` : "";
@@ -147,16 +162,17 @@ function summaryRow(r) {
   const code = framesCode(r);
   tr.innerHTML = `<td class="tog">${toggleCell(r)}</td>
     <td class="mono">${clock(r.t)}</td>
-    <td class="obs">${obs}</td>
+    <td>${hashCell(r)}</td>
+    <td class="num">${r.len}</td>
     <td class="fr"><span class="frames ${code}" title="${FRAMES_TITLE[code]}">${code}</span></td>
     <td><span class="type ${rowType(r)}">${r.kind === "orphan" ? "ORPHAN" : r.type}</span></td>
-    <td>${destCell(r)}</td>
+    <td class="dest">${destCell(r)}</td>
+    <td class="aspect">${aspectCell(r)}</td>
+    <td class="obs">${obs}</td>
     <td class="num">${r.hops ?? "–"}</td>
     <td>${fromCell(r.tx, r.tx_name)}</td>
     <td class="num">${num(r.rssi, 0)}</td>
     <td class="num">${num(r.snr, 2)}</td>
-    <td class="num">${r.len}</td>
-    <td>${hashCell(r)}</td>
     <td class="notes">${notes(r)}</td>`;
   return tr;
 }
@@ -169,14 +185,14 @@ function observationRow(o) {
   if (o.via) extra.push(`via <span class="mono">${short(o.via)}</span>`);
   tr.innerHTML = `<td></td>
     <td class="mono">${clock(o.t)}${o.delay_ms ? ` <span class="muted">+${dur(o.delay_ms)}</span>` : ""}</td>
-    <td class="obs">${esc(o.observer)}</td>
-    <td class="fr"><span class="frames ${code}" title="${FRAMES_TITLE[code]}">${code}</span></td>
     <td></td><td></td>
+    <td class="fr"><span class="frames ${code}" title="${FRAMES_TITLE[code]}">${code}</span></td>
+    <td></td><td></td><td></td>
+    <td class="obs">${esc(o.observer)}</td>
     <td class="num">${o.hops ?? "–"}</td>
     <td>${fromCell(o.tx, o.tx_name)}</td>
     <td class="num">${num(o.rssi, 0)}</td>
     <td class="num">${num(o.snr, 2)}</td>
-    <td></td><td></td>
     <td class="notes">${extra.join(" ")}</td>`;
   return tr;
 }
@@ -301,12 +317,34 @@ $("#pauseBtn").onclick = () => {
   if (!feed.paused) catchUp();
 };
 $("#typeFilter").onchange = applyFilter;
-$("#feedTable").addEventListener("click", async (e) => {
+// Hashes copy themselves when clicked, on every page; the click goes no
+// further (so a hash inside a clickable row does not also open it)
+document.addEventListener("click", async (e) => {
   const hash = e.target.closest("button.hash");
-  if (hash) {
-    try { await navigator.clipboard.writeText(hash.dataset.hash); hash.classList.add("copied"); setTimeout(() => hash.classList.remove("copied"), 1200); } catch {}
-    return;
+  if (!hash) return;
+  e.stopPropagation();
+  if (await copyText(hash.dataset.hash)) {
+    hash.classList.add("copied");
+    setTimeout(() => hash.classList.remove("copied"), 1200);
   }
+}, true);
+// Copy to the clipboard; falls back to a hidden text area where the
+// clipboard API is unavailable or refused
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch {}
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.append(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch {}
+  ta.remove();
+  return ok;
+}
+$("#feedTable").addEventListener("click", async (e) => {
   const tog = e.target.closest("button.expand");
   if (tog) toggleGroup(tog.closest("tbody"));
 });
@@ -365,7 +403,7 @@ async function loadNodes() {
       const name = n.name ? esc(n.name) : `<span class="mono">${short(n.identity, 12)}</span>`;
       const apps = (n.apps || []).map((a) => `<span class="tag">${esc(a.replace(/^rnstransport\./, ""))}</span>`).join("");
       return `<tr data-id="${n.identity}">
-        <td>${name}<div class="muted mono">${short(n.identity, 16)}</div></td>
+        <td>${name}<div class="muted small">${copyHash(n.identity, "Identity hash. Click to copy.")}</div></td>
         <td>${apps || '<span class="muted">relay only</span>'}</td>
         <td title="${new Date(n.last_seen).toLocaleString()}">${ago(n.last_seen)}</td>
         <td class="num" title="${n.best_observer_24h ? `heard by ${esc(n.best_observer_24h)}` : "no transmission heard from the node itself in the last 24 h (perhaps only via relays)"}">${n.best_rssi_24h == null ? "–" : `${num(n.best_rssi_24h, 0)} dBm`}</td>
@@ -462,7 +500,7 @@ function renderNodePage(d) {
   page.innerHTML = `
     <header class="node-head">
       <h2>${d.name ? esc(d.name) : "Unnamed node"}</h2>
-      <div class="mono muted">${d.identity}</div>
+      <div class="muted">Identity ${copyHash(d.identity)}</div>
       <div>${apps || '<span class="muted">seen only as a relay</span>'}</div>
       ${placed ? `<div class="small">${num(placed.lat, 5)}, ${num(placed.lon, 5)}${placed.height != null ? ` · ${num(placed.height, 0)} m` : ""}
         <button class="link" data-map="1" data-lat="${placed.lat}" data-lon="${placed.lon}">show on map</button></div>` : ""}
@@ -503,7 +541,7 @@ function renderNodePage(d) {
     </section>
     <h3>Destinations</h3>
     <div class="table-wrap"><table><thead><tr><th>Hash</th><th>App</th><th>Name</th><th>Announce says</th><th class="num">Announces</th><th class="num">Hops</th><th>Last seen</th></tr></thead>
-    <tbody>${(d.dests || []).map((x) => `<tr><td class="mono">${short(x.hash, 16)}</td><td>${esc(x.app)}</td><td>${esc(x.name)}</td><td class="notes">${esc(x.info || "")}</td>
+    <tbody>${(d.dests || []).map((x) => `<tr><td>${copyHash(x.hash)}</td><td>${esc(x.app)}</td><td>${esc(x.name)}</td><td class="notes">${esc(x.info || "")}</td>
       <td class="num">${x.announces}</td><td class="num">${x.last_hops ?? "–"}</td><td>${ago(x.last_seen)}</td></tr>`).join("") ||
       '<tr><td colspan="7" class="muted">Seen only as a relay (its transport ID); it has not announced a destination here.</td></tr>'}</tbody></table></div>
     <h3>Announce history</h3>
@@ -788,7 +826,7 @@ async function loadObserverNodes(o) {
   const list = await api(`/api/observers/${o.id}/nodes?days=7`);
   if (String(currentObserver) !== String(o.id)) return;
   $("#obsNodesBody").innerHTML = list.map((n) => `<tr data-id="${n.identity}" data-obs="${esc(o.ext_id)}">
-      <td>${n.name ? esc(n.name) : `<span class="mono">${short(n.identity, 12)}</span>`}<div class="muted mono">${short(n.identity, 16)}</div></td>
+      <td>${n.name ? esc(n.name) : `<span class="mono">${short(n.identity, 12)}</span>`}<div class="muted small">${copyHash(n.identity, "Identity hash. Click to copy.")}</div></td>
       <td class="num">${n.count}</td>
       <td title="${new Date(n.last).toLocaleString()}">${ago(n.last)}</td>
       <td class="num">${num(n.last_rssi, 0)} dBm / ${num(n.last_snr, 2)} dB</td>

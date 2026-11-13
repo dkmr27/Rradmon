@@ -277,3 +277,7 @@ table.per-obs tr.sel td { background: color-mix(in srgb, var(--accent) 12%, tran
 
 .heard-nodes tbody tr[data-id] { cursor: pointer; }
 h3.section { font-size: 13px; color: var(--text-2); font-weight: 600; margin: 18px 0 4px; }
+
+/* Full hashes stay on one line and are click-to-copy */
+button.hash { white-space: nowrap; font-size: 12px; }
+.feed td.dest, .feed td.aspect { white-space: nowrap; }
