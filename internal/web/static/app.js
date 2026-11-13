@@ -408,10 +408,18 @@ async function loadNodePage(id) {
   }
   if (currentNode !== id) return;
   lastNodesRefresh = Date.now();
+  // A refresh rebuilds the page and its charts are drawn just after, so for a
+  // moment it is shorter and the browser would move the scroll position. Hold
+  // the old height while it rebuilds, then put the scroll position back.
+  const page = $("#nodePage");
+  const refresh = page.dataset.node === id;
+  const scrollY = window.scrollY;
+  if (refresh) page.style.minHeight = `${page.offsetHeight}px`;
+  page.dataset.node = id;
   const kv = (k, v, title = "") => `<div${title ? ` title="${esc(title)}"` : ""}><div class="k">${k}</div><div class="v">${v}</div></div>`;
   const placed = (d.dests || []).find((x) => x.lat != null);
   const apps = (d.apps || []).map((a) => `<span class="tag">${esc(a.replace(/^rnstransport\./, ""))}</span>`).join("");
-  $("#nodePage").innerHTML = `
+  page.innerHTML = `
     <header class="node-head">
       <h2>${d.name ? esc(d.name) : "Unnamed node"}</h2>
       <div class="mono muted">${d.identity}</div>
@@ -482,6 +490,10 @@ async function loadNodePage(id) {
   nodeCharts.rssi = { el: "#rssiChart", opts: { title: "RSSI", unit: "dBm", mode: "dot", minSpan: 10, series: seriesFor("rssi") } };
   nodeCharts.snr = { el: "#snrChart", opts: { title: "SNR", unit: "dB", mode: "dot", minSpan: 5, series: seriesFor("snr") } };
   Object.values(nodeCharts).forEach(drawChart);
+  if (refresh) {
+    page.style.minHeight = "";
+    window.scrollTo(0, scrollY);
+  }
 }
 
 // ---------- map ----------
