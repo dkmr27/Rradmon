@@ -50,20 +50,56 @@ func TestWebAPI(t *testing.T) {
 		t.Errorf("summary: %+v", sm)
 	}
 
-	var feed []store.FeedRow
+	// One row per packet: 30 receptions of 27 packets
+	var feed []store.PacketRow
 	getJSON(t, srv.URL+"/api/feed?before=9999999999999&limit=500", &feed)
-	if len(feed) != 30 {
-		t.Errorf("feed rows: %d, want 30", len(feed))
+	if len(feed) != 27 {
+		t.Fatalf("feed rows: %d, want 27", len(feed))
 	}
-	for i := 1; i < len(feed); i++ {
-		if feed[i].T.After(feed[i-1].T) {
+	relayed := 0
+	for i, r := range feed {
+		if i > 0 && r.T.After(feed[i-1].T) {
 			t.Fatal("feed not newest first")
 		}
+		if len(r.FullHash) != 64 || r.FullHash[:32] != r.Hash {
+			t.Errorf("packet %d: full hash %q, truncated %q", r.ID, r.FullHash, r.Hash)
+		}
+		if r.Receptions == 2 {
+			relayed++
+			if r.Type != "ANNOUNCE" || r.MaxDelayMs == 0 || r.Hops == nil || *r.Hops != 0 {
+				t.Errorf("relayed row should show the original (hops 0) with the relay delay: %+v", r)
+			}
+			var obs []store.Observation
+			getJSON(t, srv.URL+"/api/packets/"+itoa(r.ID)+"/observations", &obs)
+			if len(obs) != 2 || obs[0].DelayMs != 0 || obs[1].DelayMs == 0 || *obs[1].Hops != 1 || obs[1].Via == "" {
+				t.Errorf("observations of %d: %+v", r.ID, obs)
+			}
+		}
+		if (r.Frames == 2) != (r.Len > 254) {
+			t.Errorf("packet %d: frames %d for %d payload bytes", r.ID, r.Frames, r.Len)
+		}
 	}
-	var after []store.FeedRow
-	getJSON(t, srv.URL+"/api/feed?after="+itoa(feed[3].T.UnixMilli()), &after)
+	if relayed != 3 {
+		t.Errorf("rows with a relayed copy: %d, want 3", relayed)
+	}
+
+	// Catch-up returns rows with any activity since: the three announces,
+	// whose relayed copies came after the newest packet was first heard.
+	var after []store.PacketRow
+	getJSON(t, srv.URL+"/api/feed?after="+itoa(feed[0].T.UnixMilli()), &after)
 	if len(after) != 3 {
 		t.Errorf("feed after: %d rows, want 3", len(after))
+	}
+
+	// Find a packet by the hash RNS would log
+	var found []store.PacketRow
+	getJSON(t, srv.URL+"/api/feed?q="+feed[5].FullHash[:10], &found)
+	if len(found) != 1 || found[0].ID != feed[5].ID {
+		t.Errorf("hash search: %d rows", len(found))
+	}
+	getJSON(t, srv.URL+"/api/feed?q=zz", &found)
+	if len(found) != 0 {
+		t.Errorf("non-hex search returned %d rows", len(found))
 	}
 
 	var nodes []store.NodeRow

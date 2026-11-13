@@ -77,27 +77,39 @@ async function loadSummary() {
 }
 
 // ---------- live feed ----------
-const feed = { rows: new Map(), newest: 0, oldest: Infinity, paused: false };
+// One row group per packet: a summary line showing the first complete
+// observation, and (expanded) one line per observation from every observer.
+// Unmatched orphan groups are row groups of their own.
+const feed = { rows: new Map(), newest: 0, oldest: Infinity, paused: false, open: new Set(), search: "" };
 const MAX_ROWS = 600;
 
 function typeFilter() { return new Set($$("#typeFilter input:checked").map((i) => i.value)); }
+const rowKey = (r) => `${r.kind}:${r.id}`;
+const rowType = (r) => (r.kind === "orphan" ? "orphan" : r.type);
+// S: one LoRa frame, D: both frames of a split packet, O: one half heard alone
+const framesCode = (r) => (r.kind === "orphan" ? "O" : r.frames === 2 ? "D" : "S");
+const FRAMES_TITLE = { S: "Single LoRa frame", D: "Double: both frames of a split packet", O: "Orphan: one half of a split packet heard alone" };
 
 function destCell(r) {
   const label = r.dest_name || r.app_name;
+  const name = label ? ` <span class="muted">${esc(label)}</span>` : "";
   if (r.kind === "orphan") {
     // A first half carries its packet's header, so say what it was
-    if (r.dest) return `<span class="muted">${esc(r.orphan_kind)} of ${esc(r.type)} to</span> <span class="mono">${short(r.dest, 12)}</span>${label ? ` <span class="muted">${esc(label)}</span>` : ""}`;
+    if (r.dest) return `<span class="muted">${esc(r.orphan_kind)} of ${esc(r.type)} to</span> <span class="mono">${short(r.dest, 12)}</span>${name}`;
     return `<span class="muted">${esc(r.orphan_kind)}</span>`;
   }
-  return `<span class="mono">${short(r.dest, 12)}</span>${label ? ` <span class="muted">${esc(label)}</span>` : ""} <span class="muted">${esc(r.dest_type)}</span>`;
+  return `<span class="mono">${short(r.dest, 12)}</span>${name} <span class="muted">${esc(r.dest_type)}</span>`;
+}
+function fromCell(tx, name) {
+  return tx ? `<a class="node" href="#node=${tx}">${esc(name) || `<span class="mono">${short(tx)}</span>`}</a>` : "";
+}
+function hashCell(r) {
+  if (!r.full_hash) return '<span class="muted">–</span>';
+  return `<button class="hash mono" data-hash="${r.full_hash}" title="Packet hash (as RNS shows it): ${r.full_hash}. Click to copy.">${r.full_hash.slice(0, 8)}</button>`;
 }
 function notes(r) {
   const t = [];
-  if (r.frames === 2) t.push(`<span class="tag">split</span>`);
-  if (r.partial) t.push(`<span class="tag warn">partial: ${r.partial === 1 ? "first" : "second"} half only</span>`);
   if (r.kind === "orphan") {
-    const obs = r.group_observers || [r.observer];
-    t.push(obs.length > 1 ? `heard by ${obs.length} observers (${obs.map(esc).join(", ")})` : `heard only by ${esc(obs[0])}`);
     t.push(r.link_id
       ? `<span class="tag warn" title="Likely link: the first proof of an unheard packet within 15 s">never heard whole; delivered, proof ${dur(r.link_delay_ms)} later</span>`
       : `<span class="tag bad">never heard whole</span>`);
@@ -107,80 +119,162 @@ function notes(r) {
       ? `<span class="tag warn" title="Likely link: the latest partly heard transmission within 15 s before">proves a packet only partly heard, ${dur(r.link_delay_ms)} earlier</span>`
       : `<span class="tag warn">proves a packet no observer heard</span>`);
   }
-  if (r.delay_ms) t.push(`again after ${dur(r.delay_ms)}`);
+  if (r.partials) t.push(`<span class="tag warn">${r.partials} half${r.partials > 1 ? "ves" : ""} heard alone</span>`);
+  if (r.max_delay_ms) t.push(`last copy after ${dur(r.max_delay_ms)}`);
   if (r.repeat) t.push(`<span class="tag">repeat</span>`);
   if (r.via) t.push(`via <span class="mono">${short(r.via)}</span>`);
   return t.join(" ");
 }
-function feedRow(r) {
+function toggleCell(r) {
+  const more = r.receptions - 1;
+  if (more < 1) return "";
+  const who = r.observers > 1 ? `, ${r.observers} obs` : "";
+  return `<button class="expand" aria-expanded="${feed.open.has(rowKey(r))}" title="Show every observation">▸ +${more}${who}</button>`;
+}
+function summaryRow(r) {
   const tr = document.createElement("tr");
-  tr.dataset.key = `${r.kind}:${r.id}`;
-  tr.dataset.type = r.kind === "orphan" ? "orphan" : r.type;
-  const from = r.tx ? `<a class="node" href="#node=${r.tx}">${esc(r.tx_name) || `<span class="mono">${short(r.tx)}</span>`}</a>` : "";
-  tr.innerHTML = `<td class="mono">${clock(r.t)}</td>
-    <td><span class="type ${r.kind === "orphan" ? "orphan" : r.type}">${r.kind === "orphan" ? "ORPHAN" : r.type}</span></td>
+  tr.className = "summary";
+  const obs = r.kind === "orphan" && r.observers > 1 ? `${esc(r.observer)} <span class="muted">+${r.observers - 1}</span>` : esc(r.observer);
+  const code = framesCode(r);
+  tr.innerHTML = `<td class="tog">${toggleCell(r)}</td>
+    <td class="mono">${clock(r.t)}</td>
+    <td class="obs">${obs}</td>
+    <td class="fr"><span class="frames ${code}" title="${FRAMES_TITLE[code]}">${code}</span></td>
+    <td><span class="type ${rowType(r)}">${r.kind === "orphan" ? "ORPHAN" : r.type}</span></td>
     <td>${destCell(r)}</td>
     <td class="num">${r.hops ?? "–"}</td>
-    <td>${from}</td>
+    <td>${fromCell(r.tx, r.tx_name)}</td>
     <td class="num">${num(r.rssi, 0)}</td>
     <td class="num">${num(r.snr, 2)}</td>
     <td class="num">${r.len}</td>
+    <td>${hashCell(r)}</td>
     <td class="notes">${notes(r)}</td>`;
   return tr;
 }
+function observationRow(o) {
+  const tr = document.createElement("tr");
+  tr.className = "obsrow";
+  const code = o.frames;
+  const extra = [];
+  if (o.part) extra.push(esc(o.part) + " only");
+  if (o.via) extra.push(`via <span class="mono">${short(o.via)}</span>`);
+  tr.innerHTML = `<td></td>
+    <td class="mono">${clock(o.t)}${o.delay_ms ? ` <span class="muted">+${dur(o.delay_ms)}</span>` : ""}</td>
+    <td class="obs">${esc(o.observer)}</td>
+    <td class="fr"><span class="frames ${code}" title="${FRAMES_TITLE[code]}">${code}</span></td>
+    <td></td><td></td>
+    <td class="num">${o.hops ?? "–"}</td>
+    <td>${fromCell(o.tx, o.tx_name)}</td>
+    <td class="num">${num(o.rssi, 0)}</td>
+    <td class="num">${num(o.snr, 2)}</td>
+    <td></td><td></td>
+    <td class="notes">${extra.join(" ")}</td>`;
+  return tr;
+}
+// A row group is a <tbody>: summary line first, then any observation lines
+function buildGroup(r) {
+  const tb = document.createElement("tbody");
+  tb.dataset.key = rowKey(r);
+  tb.dataset.type = rowType(r);
+  tb.dataset.t = ms(r.t);
+  tb.append(summaryRow(r));
+  tb.hidden = !typeFilter().has(tb.dataset.type);
+  return tb;
+}
+async function loadObservations(tb, r) {
+  const url = r.kind === "orphan" ? `/api/orphans/${r.id}/observations` : `/api/packets/${r.id}/observations`;
+  const list = await api(url);
+  [...tb.querySelectorAll("tr.obsrow")].forEach((x) => x.remove());
+  for (const o of list) tb.append(observationRow(o));
+}
+async function toggleGroup(tb) {
+  const key = tb.dataset.key;
+  const r = feed.rows.get(key);
+  if (!r) return;
+  const open = !feed.open.has(key);
+  open ? feed.open.add(key) : feed.open.delete(key);
+  tb.querySelector("button.expand")?.setAttribute("aria-expanded", open);
+  if (open) await loadObservations(tb, r);
+  else [...tb.querySelectorAll("tr.obsrow")].forEach((x) => x.remove());
+}
+// Insert keeping newest-first order by first observation time
+function insertGroup(body, tb) {
+  const t = Number(tb.dataset.t);
+  for (const other of body.children) {
+    if (Number(other.dataset.t) < t) { body.insertBefore(tb, other); return; }
+  }
+  body.append(tb);
+}
+function upsert(r, flash) {
+  const table = $("#feedTable");
+  const key = rowKey(r);
+  // Orphans heard before their whole packet arrived are now part of it
+  for (const id of r.absorbed || []) {
+    table.querySelector(`tbody[data-key="orphan:${id}"]`)?.remove();
+    feed.rows.delete(`orphan:${id}`);
+  }
+  // A proof that links back to an orphan group on screen: update that row
+  if (r.proves_unheard && r.link_id) {
+    const o = feed.rows.get(`orphan:${r.link_id}`);
+    if (o && !o.link_id) { o.link_id = r.id; o.link_delay_ms = r.link_delay_ms; upsert({ ...o }, false); }
+  }
+  const old = table.querySelector(`tbody[data-key="${key}"]`);
+  feed.rows.set(key, r);
+  if (old) {
+    const tr = summaryRow(r);
+    old.querySelector("tr.summary").replaceWith(tr);
+    if (flash) tr.classList.add("new");
+    if (feed.open.has(key)) loadObservations(old, r);
+  } else {
+    const tb = buildGroup(r);
+    if (flash) tb.firstChild.classList.add("new");
+    insertGroup(table, tb);
+  }
+  feed.newest = Math.max(feed.newest, ms(r.last_seen || r.t));
+  feed.oldest = Math.min(feed.oldest, ms(r.t));
+}
+function trim() {
+  const table = $("#feedTable");
+  const groups = table.querySelectorAll("tbody[data-key]");
+  for (let i = groups.length - 1; i >= MAX_ROWS; i--) {
+    feed.rows.delete(groups[i].dataset.key);
+    groups[i].remove();
+  }
+  const left = [...feed.rows.values()];
+  feed.oldest = left.length ? Math.min(...left.map((r) => ms(r.t))) : Infinity;
+}
 function applyFilter() {
   const f = typeFilter();
-  $$("#feedBody tr").forEach((tr) => (tr.hidden = !f.has(tr.dataset.type)));
+  $$("#feedTable tbody[data-key]").forEach((tb) => (tb.hidden = !f.has(tb.dataset.type)));
 }
-function addRows(rows, { atTop, flash }) {
-  const body = $("#feedBody");
-  const f = typeFilter();
-  const frag = document.createDocumentFragment();
-  for (const r of rows) {
-    const key = `${r.kind}:${r.id}`;
-    if (feed.rows.has(key)) continue;
-    feed.rows.set(key, r);
-    // A proof that links back to an orphan already on screen: update that row
-    if (r.proves_unheard && r.link_id) {
-      const o = feed.rows.get(`orphan:${r.link_id}`);
-      const old = o && document.querySelector(`#feedBody tr[data-key="orphan:${r.link_id}"]`);
-      if (o && old && !o.link_id) {
-        o.link_id = r.packet_id;
-        o.link_delay_ms = r.link_delay_ms;
-        const fresh = feedRow(o);
-        fresh.hidden = old.hidden;
-        old.replaceWith(fresh);
-      }
-    }
-    const tr = feedRow(r);
-    tr.hidden = !f.has(tr.dataset.type);
-    if (flash) tr.classList.add("new");
-    atTop ? frag.prepend(tr) : frag.append(tr);
-    feed.newest = Math.max(feed.newest, ms(r.t));
-    feed.oldest = Math.min(feed.oldest, ms(r.t));
-  }
-  atTop ? body.prepend(frag) : body.append(frag);
-  while (body.rows.length > MAX_ROWS && atTop) {
-    const last = body.rows[body.rows.length - 1];
-    feed.rows.delete(last.dataset.key);
-    last.remove();
-    feed.oldest = feed.rows.size ? Math.min(...[...feed.rows.values()].map((r) => ms(r.t))) : Infinity;
-  }
+function clearFeed() {
+  $$("#feedTable tbody[data-key]").forEach((tb) => tb.remove());
+  feed.rows.clear();
+  feed.newest = 0;
+  feed.oldest = Infinity;
+  $("#olderBtn").disabled = false;
 }
 async function loadFeed() {
-  const rows = await api("/api/feed?limit=150");
-  addRows(rows, { atTop: false, flash: false });
+  const q = feed.search ? `&q=${encodeURIComponent(feed.search)}` : "";
+  const rows = await api(`/api/feed?limit=150${q}`);
+  rows.forEach((r) => upsert(r, false));
+  $("#searchNote").textContent = feed.search
+    ? rows.length ? `${rows.length} packet${rows.length > 1 ? "s" : ""} with hash ${feed.search}…` : `No packet with hash ${feed.search}…`
+    : "";
 }
 async function catchUp() {
-  if (feed.paused) return;
-  // 1 ms overlap: rows sharing the newest timestamp are de-duplicated by key.
+  if (feed.paused || feed.search) return;
+  // Rows with any activity since the newest we have: new packets, and new
+  // observations of packets already shown (relayed copies, other observers)
   const rows = await api(`/api/feed?after=${feed.newest - 1}&limit=500`);
-  addRows(rows, { atTop: true, flash: true });
+  rows.forEach((r) => upsert(r, true));
+  trim();
 }
 $("#olderBtn").onclick = async () => {
   if (!isFinite(feed.oldest)) return;
-  const rows = await api(`/api/feed?before=${feed.oldest}&limit=150`);
-  addRows(rows, { atTop: false, flash: false });
+  const q = feed.search ? `&q=${encodeURIComponent(feed.search)}` : "";
+  const rows = await api(`/api/feed?before=${feed.oldest}&limit=150${q}`);
+  rows.forEach((r) => upsert(r, false));
   if (!rows.length) $("#olderBtn").disabled = true;
 };
 $("#pauseBtn").onclick = () => {
@@ -190,6 +284,24 @@ $("#pauseBtn").onclick = () => {
   if (!feed.paused) catchUp();
 };
 $("#typeFilter").onchange = applyFilter;
+$("#feedTable").addEventListener("click", async (e) => {
+  const hash = e.target.closest("button.hash");
+  if (hash) {
+    try { await navigator.clipboard.writeText(hash.dataset.hash); hash.classList.add("copied"); setTimeout(() => hash.classList.remove("copied"), 1200); } catch {}
+    return;
+  }
+  const tog = e.target.closest("button.expand");
+  if (tog) toggleGroup(tog.closest("tbody"));
+});
+let hashTimer;
+$("#hashSearch").oninput = () => {
+  clearTimeout(hashTimer);
+  hashTimer = setTimeout(() => {
+    feed.search = $("#hashSearch").value.trim().toLowerCase().replace(/[^0-9a-f]/g, "");
+    clearFeed();
+    loadFeed().catch(console.error);
+  }, 300);
+};
 
 // ---------- live stream ----------
 let lastNodesRefresh = 0;

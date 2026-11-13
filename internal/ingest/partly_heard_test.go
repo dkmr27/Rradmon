@@ -126,3 +126,75 @@ func TestProofOfUnheardPacket(t *testing.T) {
 		t.Errorf("unlinked unheard proofs: %d, want 1", n)
 	}
 }
+
+// In the packet feed, an orphan heard before its whole packet is absorbed:
+// no orphan row, the packet row lists it, and its observations include the
+// half as an O.
+func TestPacketFeedAbsorbsOrphan(t *testing.T) {
+	in, st := setup(t)
+	f1, f2 := splitPacket(5)
+	must(t, in.Frame("B", "test", frame(690, f2, -112), true)) // B: second half only
+	must(t, in.Frame("A", "test", frame(0, f1, -90), true))
+	must(t, in.Frame("A", "test", frame(700, f2, -91), true))
+
+	rows, err := st.PacketFeed(t0.Add(time.Hour), time.Time{}, "", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Kind != "packet" || len(rows[0].Absorbed) != 1 {
+		t.Fatalf("rows: %+v", rows)
+	}
+	r := rows[0]
+	if r.Observer != "A" || r.Frames != 2 || r.Receptions != 2 || r.Partials != 1 {
+		t.Errorf("summary should be A's complete reception: %+v", r)
+	}
+	obs, err := st.PacketObservations(r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codes := ""
+	for _, o := range obs {
+		codes += o.Frames
+	}
+	if len(obs) != 2 || codes != "OD" || obs[0].Part != "second half" {
+		t.Errorf("observations: %s %+v", codes, obs)
+	}
+}
+
+// An orphan group is one feed row naming every observer.
+func TestPacketFeedOrphanGroup(t *testing.T) {
+	in, st := setup(t)
+	f1, _, proof := probeFrames(t)
+	must(t, in.Frame("A", "test", frame(0, f1, -94), true))
+	must(t, in.Frame("B", "test", frame(5, f1, -98), true))
+	must(t, in.Frame("A", "test", frame(1300, proof, -60), true))
+	must(t, in.Frame("B", "test", frame(1310, proof, -72), true))
+	rows, err := st.PacketFeed(t0.Add(time.Hour), time.Time{}, "", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var orphan, proofRow *int
+	for i := range rows {
+		i := i
+		switch {
+		case rows[i].Kind == "orphan":
+			orphan = &i
+		case rows[i].Type == "PROOF":
+			proofRow = &i
+		}
+	}
+	if len(rows) != 2 || orphan == nil || proofRow == nil {
+		t.Fatalf("rows: %+v", rows)
+	}
+	o, p := rows[*orphan], rows[*proofRow]
+	if o.Observers != 2 || o.LinkID != p.ID || o.Type != "DATA" {
+		t.Errorf("orphan row: %+v", o)
+	}
+	if !p.ProvesUnheard || p.LinkID != o.ID || p.Receptions != 2 {
+		t.Errorf("proof row: %+v", p)
+	}
+	obs, err := st.OrphanObservations(o.ID)
+	if err != nil || len(obs) != 2 || obs[0].Frames != "O" {
+		t.Errorf("orphan observations: %+v %v", obs, err)
+	}
+}

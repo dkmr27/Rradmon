@@ -64,6 +64,8 @@ func New(st *store.Store, log *slog.Logger) *Server {
 	s.mux.HandleFunc("GET /api/channel/{observer}", s.channel)
 	s.mux.HandleFunc("GET /api/stream", s.stream)
 	s.mux.HandleFunc("GET /api/observers", s.observers)
+	s.mux.HandleFunc("GET /api/packets/{id}/observations", s.packetObservations)
+	s.mux.HandleFunc("GET /api/orphans/{id}/observations", s.orphanObservations)
 	return s
 }
 
@@ -147,21 +149,44 @@ func timeParam(r *http.Request, name string) (time.Time, bool) {
 	return time.UnixMilli(ms), true
 }
 
-// feed: ?before=<ms> pages back (newest first); ?after=<ms> catches up
-// (oldest first).
+// feed: one row per packet (and per unmatched orphan group).
+// ?before=<ms> pages back, newest first; ?after=<ms> returns rows with any
+// activity since, oldest first; ?q=<hex> narrows to a packet hash prefix.
 func (s *Server) feed(w http.ResponseWriter, r *http.Request) {
 	limit := intParam(r, "limit", 100, 500)
-	if after, ok := timeParam(r, "after"); ok {
-		rows, err := s.st.FeedAfter(after, limit)
-		s.writeJSON(w, nonNil(rows), err)
-		return
-	}
+	q := r.URL.Query().Get("q")
+	after, _ := timeParam(r, "after")
 	before, ok := timeParam(r, "before")
 	if !ok {
 		before = time.Now().Add(time.Hour)
 	}
-	rows, err := s.st.Feed(before, limit)
+	rows, err := s.st.PacketFeed(before, after, q, limit)
 	s.writeJSON(w, nonNil(rows), err)
+}
+
+func idParam(r *http.Request) (int64, bool) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	return id, err == nil && id > 0
+}
+
+func (s *Server) packetObservations(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(r)
+	if !ok {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	obs, err := s.st.PacketObservations(id)
+	s.writeJSON(w, nonNil(obs), err)
+}
+
+func (s *Server) orphanObservations(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(r)
+	if !ok {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	obs, err := s.st.OrphanObservations(id)
+	s.writeJSON(w, nonNil(obs), err)
 }
 
 func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {

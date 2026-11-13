@@ -179,4 +179,10 @@ ALTER TABLE packets ADD COLUMN proves_unheard INTEGER;
 ALTER TABLE packets ADD COLUMN proves_orphan INTEGER;
 CREATE INDEX frame_errors_group ON frame_errors(group_id);
 `,
+	// 4: the full 32-byte packet hash, as RNS shows it (packet.get_hash()),
+	// so a packet can be looked up by the hash its sender logged
+	`
+ALTER TABLE packets ADD COLUMN full_hash BLOB;
+CREATE INDEX packets_full_hash ON packets(full_hash) WHERE full_hash IS NOT NULL;
+`,
 }

@@ -195,3 +195,21 @@ a.node:hover, button.link:hover { text-decoration: underline; }
   .top { gap: 12px; padding: 10px 16px; }
   main, .stats { padding-left: 16px; padding-right: 16px; }
 }
+
+/* Packet feed: one row group per packet */
+.feed tbody + tbody { border-top: 1px solid var(--border); }
+.feed tr.obsrow td { background: var(--surface-2); font-size: 13px; padding-top: 3px; padding-bottom: 3px; border-bottom: 0; }
+.feed td.tog { width: 1%; padding-right: 0; }
+.feed td.obs { font-size: 13px; }
+.expand { border: 1px solid var(--border); background: var(--surface); border-radius: 4px; padding: 0 6px;
+  font-size: 12px; cursor: pointer; color: var(--text-2); white-space: nowrap; }
+.expand[aria-expanded="true"] { background: var(--surface-2); }
+.expand:hover { border-color: var(--text-3); }
+.frames { display: inline-block; width: 18px; text-align: center; border-radius: 3px; font-size: 11px; font-weight: 700;
+  border: 1px solid var(--border); color: var(--text-2); }
+.frames.D { border-color: var(--accent); color: var(--text); }
+.frames.O { border-color: var(--bad); border-style: dashed; color: var(--text); }
+button.hash { background: none; border: 0; padding: 0; cursor: copy; color: var(--text-2); }
+button.hash:hover { color: var(--text); text-decoration: underline dotted; }
+button.hash.copied::after { content: " copied"; color: var(--good); font-family: system-ui, sans-serif; }
+input.hash-search { min-width: 0; width: 170px; font-family: var(--mono); }

@@ -31,15 +31,21 @@
         <label><input type="checkbox" value="PROOF" checked> Proof</label>
         <label><input type="checkbox" value="orphan" checked> Orphans</label>
       </div>
+      <input id="hashSearch" type="search" class="hash-search" placeholder="Packet hash" title="Find packets by hash: type the start of the hex hash RNS shows" autocomplete="off" spellcheck="false">
       <button id="pauseBtn" class="btn">Pause</button>
+      <span class="muted small" id="searchNote"></span>
     </div>
     <div class="table-wrap">
-      <table class="feed">
+      <table class="feed" id="feedTable">
         <thead><tr>
-          <th>Time</th><th>Type</th><th>Destination</th><th class="num">Hops</th>
-          <th>From</th><th class="num">RSSI</th><th class="num">SNR</th><th class="num" title="Reticulum payload bytes after the header">Payload</th><th>Notes</th>
+          <th></th><th>Time</th><th>Observer</th>
+          <th title="S single frame, D both frames of a split packet, O one half heard alone">Fr</th>
+          <th>Type</th><th>Destination</th><th class="num">Hops</th>
+          <th>From</th><th class="num">RSSI</th><th class="num">SNR</th>
+          <th class="num" title="Reticulum payload bytes after the header">Payload</th>
+          <th title="Packet hash, as RNS shows it (first 8 hex digits; hover for all, click to copy)">Hash</th>
+          <th>Notes</th>
         </tr></thead>
-        <tbody id="feedBody"></tbody>
       </table>
     </div>
     <div class="more"><button id="olderBtn" class="btn">Load older</button></div>

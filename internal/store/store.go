@@ -10,6 +10,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/dkmr27/Rradmon/internal/reticulum"
 )
 
 // Store wraps the database. It is safe for concurrent use; writes are
@@ -35,7 +37,51 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := s.backfillFullHash(); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return s, nil
+}
+
+// backfillFullHash computes the full packet hash for packets stored before
+// it was kept, from their stored bytes (packets without payload stay unset).
+func (s *Store) backfillFullHash() error {
+	for {
+		rows, err := s.DB.Query(`SELECT id, payload FROM packets
+			WHERE full_hash IS NULL AND payload IS NOT NULL LIMIT 500`)
+		if err != nil {
+			return err
+		}
+		type item struct {
+			id   int64
+			hash []byte
+		}
+		var items []item
+		for rows.Next() {
+			var id int64
+			var raw []byte
+			if err := rows.Scan(&id, &raw); err != nil {
+				rows.Close()
+				return err
+			}
+			h := []byte{} // unparseable: mark done with an empty value
+			if p, err := reticulum.Parse(raw); err == nil {
+				full := p.Hash()
+				h = full[:]
+			}
+			items = append(items, item{id, h})
+		}
+		rows.Close()
+		if len(items) == 0 {
+			return nil
+		}
+		for _, it := range items {
+			if _, err := s.DB.Exec(`UPDATE packets SET full_hash = ? WHERE id = ?`, it.hash, it.id); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func (s *Store) Close() error { return s.DB.Close() }

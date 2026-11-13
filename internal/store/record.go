@@ -78,10 +78,11 @@ func (s *Store) RecordReception(r Reception) (Recorded, error) {
 		if len(r.FrameHash) == 2 {
 			h1, h2 = r.FrameHash[0], r.FrameHash[1]
 		}
-		res, err := tx.Exec(`INSERT INTO packets (network_id, hash, first_seen, last_seen, pkt_type, dest_type,
+		full := p.Hash()
+		res, err := tx.Exec(`INSERT INTO packets (network_id, hash, full_hash, first_seen, last_seen, pkt_type, dest_type,
 			context, dest_hash, data_len, rx_count, payload, h1, h2, repeat_of)
-			VALUES (?,?,?,?,?,?,?,?,?,1,?,?,?,?)`,
-			r.NetworkID, hash, t, t, p.Type, p.DestType, p.Context, p.Dest, len(p.Data),
+			VALUES (?,?,?,?,?,?,?,?,?,?,1,?,?,?,?)`,
+			r.NetworkID, hash, full[:], t, t, p.Type, p.DestType, p.Context, p.Dest, len(p.Data),
 			payload, h1, h2, nullID(out.RepeatOf))
 		if err != nil {
 			return out, err
@@ -448,6 +449,9 @@ func addPartial(tx *sql.Tx, pid, frameErrorID, obs, t int64, rssi, snr *float32,
 	if _, err := tx.Exec(`INSERT INTO receptions (packet_id, observer_id, t_rx, rssi, snr, hops, header2,
 		transport, frames, partial, delay_ms) VALUES (?,?,?,?,?,?,?,?,1,?,?)`,
 		pid, obs, t, f32(rssi), f32(snr), hops, header2, transport, part, t-firstSeen); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE packets SET last_seen = MAX(last_seen, ?) WHERE id = ?`, t, pid); err != nil {
 		return err
 	}
 	_, err := tx.Exec(`UPDATE frame_errors SET matched_packet_id = ? WHERE id = ?`, pid, frameErrorID)
