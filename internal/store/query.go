@@ -239,6 +239,9 @@ type NodeRow struct {
 	LastSNR      *float64  `json:"last_snr"`
 	AvgRSSI24h   *float64  `json:"avg_rssi_24h"`
 	AvgSNR24h    *float64  `json:"avg_snr_24h"`
+	// Distinct announces from this identity in the last 24 h (relayed copies
+	// count once); the page shows it as a rate per hour
+	Announces24h int64 `json:"announces_24h"`
 }
 
 // Nodes lists nodes, optionally filtered by a search string matched against
@@ -264,9 +267,10 @@ func (s *Store) Nodes(q string, now time.Time) ([]NodeRow, error) {
 			(SELECT snr FROM receptions WHERE tx_identity = ids.ident ORDER BY t_rx DESC LIMIT 1),
 			(SELECT AVG(rssi) FROM receptions WHERE tx_identity = ids.ident AND t_rx >= ?),
 			(SELECT AVG(snr) FROM receptions WHERE tx_identity = ids.ident AND t_rx >= ?),
+			(SELECT COUNT(*) FROM announces WHERE identity_hash = ids.ident AND t_rx >= ?) AS ann24,
 			(SELECT group_concat(lower(hex(hash)) || ' ' || lower(COALESCE(display_name,'')) || ' ' || lower(COALESCE(app_name,'')), ' ')
 				FROM destinations WHERE identity_hash = ids.ident)
-		FROM ids ORDER BY 7 DESC`, day, day)
+		FROM ids ORDER BY 7 DESC`, day, day, day)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +285,7 @@ func (s *Store) Nodes(q string, now time.Time) ([]NodeRow, error) {
 			last       int64
 		)
 		if err := rows.Scan(&ident, &name, &apps, &n.Destinations, &n.Announces, &n.MinHops, &last,
-			&n.HeardDirect, &n.LastRSSI, &n.LastSNR, &n.AvgRSSI24h, &n.AvgSNR24h, &search); err != nil {
+			&n.HeardDirect, &n.LastRSSI, &n.LastSNR, &n.AvgRSSI24h, &n.AvgSNR24h, &n.Announces24h, &search); err != nil {
 			return nil, err
 		}
 		n.Identity, n.Name, n.LastSeen = hx(ident), name.String, fromMs(last)
@@ -304,6 +308,29 @@ type NodeDetail struct {
 	Signal    []SignalPoint `json:"signal"`
 	Hourly    []HourRow     `json:"hourly"`
 	Relayed   int64         `json:"relayed"` // announces from others it rebroadcast
+
+	// Last 24 h, oldest hour first (24 entries): distinct announces per hour
+	AnnounceRate []HourCount `json:"announce_rate"`
+	// Last 24 h: how each observer hears this node
+	PerObserver []ObserverSignal `json:"per_observer"`
+}
+
+// HourCount is a count for one clock hour.
+type HourCount struct {
+	Hour  time.Time `json:"hour"`
+	Count int64     `json:"count"`
+}
+
+// ObserverSignal summarises one observer's receptions of a node.
+type ObserverSignal struct {
+	Observer string    `json:"observer"`
+	Count    int64     `json:"count"`
+	RSSIAvg  float64   `json:"rssi_avg"`
+	RSSIMin  float64   `json:"rssi_min"`
+	RSSIMax  float64   `json:"rssi_max"`
+	SNRAvg   float64   `json:"snr_avg"`
+	SNRMin   float64   `json:"snr_min"`
+	Last     time.Time `json:"last"`
 }
 
 type DestRow struct {
@@ -450,7 +477,50 @@ func (s *Store) Node(identHex string, now time.Time) (*NodeDetail, error) {
 
 	err = s.DB.QueryRow(`SELECT COUNT(*) FROM receptions r JOIN packets p ON p.id = r.packet_id
 		WHERE r.tx_identity = ? AND r.header2 = 1 AND p.pkt_type = 1`, ident).Scan(&d.Relayed)
-	return &d, err
+	if err != nil {
+		return nil, err
+	}
+
+	// Announce rate: distinct announces per clock hour over the last 24 h
+	first := now.Truncate(time.Hour).Add(-23 * time.Hour)
+	counts := map[int64]int64{}
+	rows, err = s.DB.Query(`SELECT t_rx FROM announces WHERE identity_hash = ? AND t_rx >= ?`, ident, ms(first))
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var t int64
+		if err := rows.Scan(&t); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		counts[fromMs(t).Truncate(time.Hour).UnixMilli()]++
+	}
+	rows.Close()
+	for h := 0; h < 24; h++ {
+		hr := first.Add(time.Duration(h) * time.Hour)
+		d.AnnounceRate = append(d.AnnounceRate, HourCount{Hour: hr, Count: counts[hr.UnixMilli()]})
+	}
+
+	// Per observer, last 24 h
+	rows, err = s.DB.Query(`SELECT o.ext_id, COUNT(*), AVG(r.rssi), MIN(r.rssi), MAX(r.rssi), AVG(r.snr), MIN(r.snr), MAX(r.t_rx)
+		FROM receptions r JOIN observers o ON o.id = r.observer_id
+		WHERE r.tx_identity = ? AND r.rssi IS NOT NULL AND r.t_rx >= ?
+		GROUP BY o.ext_id ORDER BY COUNT(*) DESC`, ident, ms(now.Add(-24*time.Hour)))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var o ObserverSignal
+		var last int64
+		if err := rows.Scan(&o.Observer, &o.Count, &o.RSSIAvg, &o.RSSIMin, &o.RSSIMax, &o.SNRAvg, &o.SNRMin, &last); err != nil {
+			return nil, err
+		}
+		o.Last = fromMs(last)
+		d.PerObserver = append(d.PerObserver, o)
+	}
+	return &d, rows.Err()
 }
 
 // ChannelPoint is one channel report.

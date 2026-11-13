@@ -112,3 +112,49 @@ func TestObserverOfflineStatus(t *testing.T) {
 		t.Error("unknown status field passed through")
 	}
 }
+
+// The node page's numbers, against the bench corpus at the time it was captured.
+func TestNodePageStats(t *testing.T) {
+	st := openTestStore(t)
+	if _, err := importCapture(st, "../../testdata/rig-corpus1.jsonl", true); err != nil {
+		t.Fatal(err)
+	}
+	var last int64
+	st.DB.QueryRow(`SELECT MAX(t_rx) FROM receptions`).Scan(&last)
+	now := time.UnixMilli(last).Add(time.Minute)
+
+	nodes, err := st.Nodes("", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rrptr store.NodeRow
+	for _, n := range nodes {
+		if n.Identity == "135a9914ef8e82c36ea3c82bd4689e02" {
+			rrptr = n
+		}
+	}
+	if rrptr.Announces24h != 3 {
+		t.Errorf("Rrptr announces in 24 h: %d, want 3", rrptr.Announces24h)
+	}
+
+	d, err := st.Node("135a9914ef8e82c36ea3c82bd4689e02", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.AnnounceRate) != 24 {
+		t.Fatalf("announce rate buckets: %d", len(d.AnnounceRate))
+	}
+	var total int64
+	for i, h := range d.AnnounceRate {
+		total += h.Count
+		if i > 0 && !h.Hour.After(d.AnnounceRate[i-1].Hour) {
+			t.Error("hours not in order")
+		}
+	}
+	if total != 3 || d.AnnounceRate[23].Count != 3 {
+		t.Errorf("announce rate: total %d, last hour %d (want 3, 3)", total, d.AnnounceRate[23].Count)
+	}
+	if len(d.PerObserver) != 1 || d.PerObserver[0].Observer != "rnode:COM32" || d.PerObserver[0].Count != 3 {
+		t.Errorf("per observer: %+v", d.PerObserver)
+	}
+}

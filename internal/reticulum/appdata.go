@@ -55,16 +55,56 @@ func msgpackString(b []byte) (string, bool) {
 }
 
 // clean keeps printable text, trims it and caps its length.
+// MaxTextRunes caps any text taken from app data. Announces are untrusted
+// broadcasts: a name must not be able to flood or distort the page.
+const MaxTextRunes = 64
+
+// clean makes untrusted text safe to show on one line:
+//   - drops control and format characters (newlines, tabs, zero-width and
+//     bidirectional overrides such as U+202E, which could reverse text);
+//   - collapses runs of whitespace to one space;
+//   - keeps at most 2 combining marks per character, so "stacked" text
+//     cannot spill into the rows above and below;
+//   - caps the result at MaxTextRunes, marking a cut with an ellipsis.
 func clean(s string) string {
-	s = strings.Map(func(r rune) rune {
-		if unicode.IsPrint(r) {
-			return r
+	var b strings.Builder
+	marks, space := 0, false
+	n := 0
+	cut := false
+	for _, r := range s {
+		switch {
+		case unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r):
+			marks++
+			if marks > 2 || n == 0 {
+				continue
+			}
+		case unicode.IsSpace(r):
+			if !space && n > 0 {
+				space = true
+			}
+			continue
+		case !unicode.IsPrint(r):
+			continue
+		default:
+			marks = 0
+			if space {
+				b.WriteRune(' ')
+				n++
+				space = false
+			}
 		}
-		return -1
-	}, s)
-	s = strings.TrimSpace(s)
-	if r := []rune(s); len(r) > 64 {
-		s = string(r[:64])
+		if n >= MaxTextRunes {
+			cut = true
+			break
+		}
+		b.WriteRune(r)
+		if !unicode.Is(unicode.Mn, r) && !unicode.Is(unicode.Me, r) {
+			n++
+		}
 	}
-	return s
+	out := b.String()
+	if cut {
+		out = strings.TrimSpace(out) + "…"
+	}
+	return out
 }

@@ -193,4 +193,9 @@ ALTER TABLE destinations ADD COLUMN info TEXT;
 ALTER TABLE destinations ADD COLUMN height REAL;
 ALTER TABLE destinations ADD COLUMN info_t INTEGER;  -- announce time the info came from
 `,
+	// 6: summaries now start with the app label and give discovery positions;
+	// clear them so they are rebuilt from each destination's latest announce
+	`
+UPDATE destinations SET info = NULL, info_t = NULL;
+`,
 }

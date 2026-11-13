@@ -120,29 +120,56 @@ type AnnounceInfo struct {
 	Discovery *Discovery // set for interface-discovery announces
 }
 
+// AppLabel is a short, human name for a well-known announce app, or "".
+func AppLabel(nameHash []byte) string {
+	switch WellKnownName(nameHash) {
+	case "rnstransport.discovery.interface":
+		return "Discovery"
+	case "nomadnetwork.node":
+		return "NomadNet"
+	case "lxmf.delivery":
+		return "LXMF"
+	case "lxmf.propagation":
+		return "LXMF propagation"
+	case "rnstransport.probe":
+		return "Probe"
+	case "rnstransport.remote.management":
+		return "Remote management"
+	case "rnstransport.info.blackhole":
+		return "Blackhole list"
+	}
+	return ""
+}
+
 // DescribeAnnounce summarises an announce's app data by its app (name hash).
+// The summary starts with the app's label (Discovery, NomadNet, LXMF...).
+// Announces are public broadcasts, so a discovery position is shown in full.
 func DescribeAnnounce(nameHash, appData []byte) AnnounceInfo {
-	app := WellKnownName(nameHash)
+	label := AppLabel(nameHash)
+	if label == "" {
+		label = "Announce"
+	}
+	parts := []string{label}
 	var info AnnounceInfo
-	switch app {
+	done := func() AnnounceInfo {
+		info.Summary = strings.Join(parts, " · ")
+		return info
+	}
+	switch WellKnownName(nameHash) {
 	case "rnstransport.discovery.interface":
 		d, err := ParseDiscovery(appData)
 		if err != nil {
-			info.Summary = "discovery data unreadable"
-			return info
+			parts = append(parts, "data unreadable")
+			return done()
 		}
 		info.Discovery = d
 		if d.Encrypted {
-			info.Summary = "discovery data encrypted to a network"
-			return info
+			parts = append(parts, "encrypted to a network")
+			return done()
 		}
 		info.Name = d.Name
-		parts := []string{}
 		if d.Name != "" {
 			parts = append(parts, fmt.Sprintf("%q", d.Name))
-		}
-		if d.Interface != "" {
-			parts = append(parts, d.Interface)
 		}
 		if d.Impl != "" {
 			parts = append(parts, strings.TrimSpace(d.Impl+" "+d.Version))
@@ -168,21 +195,18 @@ func DescribeAnnounce(nameHash, appData []byte) AnnounceInfo {
 			parts = append(parts, "reachable on "+ep)
 		}
 		if d.IFACNet != "" {
-			parts = append(parts, "network "+fmt.Sprintf("%q", d.IFACNet))
+			parts = append(parts, fmt.Sprintf("network %q", d.IFACNet))
 		}
 		if d.Lat != nil {
-			pos := "position"
-			if d.Height != nil {
-				pos += fmt.Sprintf(" (%.0f m)", *d.Height)
-			}
-			parts = append(parts, pos)
+			parts = append(parts, fmt.Sprintf("%.5f, %.5f", *d.Lat, *d.Lon))
 		}
-		info.Summary = strings.Join(parts, " · ")
-		return info
+		if d.Height != nil {
+			parts = append(parts, fmt.Sprintf("%.0f m", *d.Height))
+		}
+		return done()
 	case "lxmf.delivery":
 		// [display name, stamp cost] (older versions: the name as plain bytes)
 		info.Name = DisplayName(nameHash, appData)
-		parts := []string{}
 		if info.Name != "" {
 			parts = append(parts, fmt.Sprintf("%q", info.Name))
 		}
@@ -193,23 +217,22 @@ func DescribeAnnounce(nameHash, appData []byte) AnnounceInfo {
 				}
 			}
 		}
-		info.Summary = strings.Join(parts, " · ")
-		return info
+		return done()
 	case "lxmf.propagation":
-		info.Summary = "LXMF propagation node"
-		return info
+		return done()
 	}
 	if len(appData) == 0 {
-		return info
+		return done()
 	}
 	if name := DisplayName(nameHash, appData); name != "" {
 		info.Name = name
-		info.Summary = fmt.Sprintf("%q", name)
-		return info
+		parts = append(parts, fmt.Sprintf("%q", name))
+		return done()
 	}
-	info.Summary = fmt.Sprintf("%d bytes of app data", len(appData))
+	other := fmt.Sprintf("%d bytes of app data", len(appData))
 	if len(appData) <= 8 {
-		info.Summary += " " + hex.EncodeToString(appData)
+		other += " " + hex.EncodeToString(appData)
 	}
-	return info
+	parts = append(parts, other)
+	return done()
 }

@@ -250,3 +250,15 @@ input.hash-search { min-width: 0; width: 170px; font-family: var(--mono); }
 .map-list li { padding: 5px 0; border-bottom: 1px solid var(--border); }
 .ann-info { color: var(--text); }
 @media (max-width: 900px) { .map-wrap { grid-template-columns: minmax(0, 1fr); } .map { height: 420px; } }
+
+/* Node page */
+.node-head { margin: 4px 0 8px; display: grid; gap: 4px; }
+.node-head h2 { margin: 0; font-size: 22px; }
+.kv.kv4 { grid-template-columns: repeat(4, 1fr); margin-bottom: 16px; }
+.node-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.node-page h3 { font-size: 13px; color: var(--text-2); font-weight: 600; margin: 18px 0 6px; }
+.node-page .card h3 { margin-top: 12px; }
+.nodes tbody tr { cursor: pointer; }
+/* Untrusted text from announces: wrap rather than widen the table */
+td.notes { overflow-wrap: anywhere; max-width: 60ch; }
+@media (max-width: 900px) { .kv.kv4 { grid-template-columns: repeat(2, 1fr); } .node-grid { grid-template-columns: minmax(0, 1fr); } }

@@ -96,13 +96,10 @@ func TestDescribeDiscovery(t *testing.T) {
 	if d.Lat == nil || *d.Lat != -10.5 || *d.Lon != 120.25 || *d.Height != 312 {
 		t.Errorf("position %v %v %v", d.Lat, d.Lon, d.Height)
 	}
-	want := `"Hilltop" · RNodeInterface · Rrptr 0.1.0 · 925.875 MHz 250 kHz SF9 · position (312 m)`
+	// Type first; no interface type; the (public, broadcast) position in full
+	want := `Discovery · "Hilltop" · Rrptr 0.1.0 · 925.875 MHz 250 kHz SF9 · -10.50000, 120.25000 · 312 m`
 	if info.Summary != want {
 		t.Errorf("summary\n got %s\nwant %s", info.Summary, want)
-	}
-	// The summary says a position exists, never the coordinates
-	if strings.Contains(info.Summary, "10.5") || strings.Contains(info.Summary, "120") {
-		t.Error("coordinates in the summary")
 	}
 }
 
@@ -119,18 +116,18 @@ func TestDescribeLXMFAndNomad(t *testing.T) {
 	m.bin([]byte("Alice"))
 	m.uint(8)
 	info := DescribeAnnounce(NameHash("lxmf.delivery"), m.Bytes())
-	if info.Name != "Alice" || info.Summary != `"Alice" · stamp cost 8` {
+	if info.Name != "Alice" || info.Summary != `LXMF · "Alice" · stamp cost 8` {
 		t.Errorf("lxmf: %+v", info)
 	}
 	info = DescribeAnnounce(NameHash("nomadnetwork.node"), []byte("Testing-Rrptr"))
-	if info.Name != "Testing-Rrptr" || info.Summary != `"Testing-Rrptr"` {
+	if info.Name != "Testing-Rrptr" || info.Summary != `NomadNet · "Testing-Rrptr"` {
 		t.Errorf("nomadnet: %+v", info)
 	}
 	info = DescribeAnnounce(NameHash("some.app"), []byte{0x00, 0xff, 0x10})
-	if info.Name != "" || !strings.HasPrefix(info.Summary, "3 bytes of app data") {
+	if info.Name != "" || info.Summary != "Announce · 3 bytes of app data 00ff10" {
 		t.Errorf("binary: %+v", info)
 	}
-	if info := DescribeAnnounce(NameHash("rnstransport.probe"), nil); info.Summary != "" {
+	if info := DescribeAnnounce(NameHash("rnstransport.probe"), nil); info.Summary != "Probe" {
 		t.Errorf("empty: %+v", info)
 	}
 }
@@ -160,5 +157,30 @@ func TestMsgpackGarbage(t *testing.T) {
 		if _, _, err := msgpackDecode(b); err == nil {
 			t.Errorf("% x: no error", b)
 		}
+	}
+}
+
+// Untrusted text from app data stays short, on one line and upright.
+func TestCleanUntrustedText(t *testing.T) {
+	cases := map[string]string{
+		"Garden\nNode\t\t2": "Garden Node 2",
+		"evil‮edoc":         "eviledoc", // right-to-left override removed
+		"zero​width":        "zerowidth",
+		"  spaced   out  ":  "spaced out",
+		"Ź̂̃̄̅":            "Ź̂", // at most 2 combining marks
+	}
+	for in, want := range cases {
+		if got := clean(in); got != want {
+			t.Errorf("clean(%q) = %q, want %q", in, got, want)
+		}
+	}
+	long := strings.Repeat("a", 500)
+	if got := clean(long); len([]rune(got)) != MaxTextRunes+1 || !strings.HasSuffix(got, "…") {
+		t.Errorf("long text: %d runes", len([]rune(got)))
+	}
+	// A NomadNet name of 400 printable characters is capped in the summary
+	info := DescribeAnnounce(NameHash("nomadnetwork.node"), []byte(strings.Repeat("x", 400)))
+	if len([]rune(info.Summary)) > len("NomadNet · ")+MaxTextRunes+3 {
+		t.Errorf("summary too long: %d runes", len([]rune(info.Summary)))
 	}
 }

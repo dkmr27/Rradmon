@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"math"
-	"strings"
 	"testing"
 	"time"
 
@@ -89,11 +88,10 @@ func TestDiscoveryPlacesNode(t *testing.T) {
 	for _, r := range rows {
 		infos[r.AppName] = r.Info
 	}
-	if !strings.HasPrefix(infos["rnstransport.discovery.interface"], `"Hilltop" · RNodeInterface`) ||
-		!strings.Contains(infos["rnstransport.discovery.interface"], "position") {
+	if infos["rnstransport.discovery.interface"] != `Discovery · "Hilltop" · -10.50000, 120.25000` {
 		t.Errorf("discovery info: %q", infos["rnstransport.discovery.interface"])
 	}
-	if infos["nomadnetwork.node"] != `"Garden Node"` {
+	if infos["nomadnetwork.node"] != `NomadNet · "Garden Node"` {
 		t.Errorf("nomadnet info: %q", infos["nomadnetwork.node"])
 	}
 }

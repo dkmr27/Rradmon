@@ -56,19 +56,23 @@
     <div class="toolbar">
       <input id="nodeSearch" type="search" placeholder="Search name, identity or destination hash" autocomplete="off">
     </div>
-    <div class="split">
-      <div class="table-wrap">
-        <table class="nodes">
-          <thead><tr>
-            <th>Node</th><th>Apps</th><th>Last heard</th><th class="num">Last RSSI</th><th class="num">Last SNR</th>
-            <th class="num">24 h RSSI</th><th class="num">Announces</th><th class="num">Hops</th>
-          </tr></thead>
-          <tbody id="nodesBody"></tbody>
-        </table>
-        <p class="empty" id="nodesEmpty" hidden>No nodes yet. Nodes appear when they announce, or when their packets can be attributed.</p>
-      </div>
-      <aside id="nodeDetail" class="detail" hidden></aside>
+    <div class="table-wrap">
+      <table class="nodes">
+        <thead><tr>
+          <th>Node</th><th>Apps</th><th>Last heard</th><th class="num">Last RSSI</th><th class="num">Last SNR</th>
+          <th class="num">24 h RSSI</th>
+          <th class="num" title="Distinct announces from this node per hour, averaged over the last 24 h">Announces / h</th>
+          <th class="num">Announces</th><th class="num">Hops</th>
+        </tr></thead>
+        <tbody id="nodesBody"></tbody>
+      </table>
+      <p class="empty" id="nodesEmpty" hidden>No nodes yet. Nodes appear when they announce, or when their packets can be attributed.</p>
     </div>
+  </section>
+
+  <section id="tab-node" class="tab node-page" hidden>
+    <div class="toolbar"><button id="nodeBack" class="btn">← Back</button></div>
+    <div id="nodePage"></div>
   </section>
 
   <section id="tab-observers" class="tab" hidden>

@@ -46,15 +46,19 @@ function store(key, val) { try { if (val === undefined) return localStorage.getI
 let currentTab = "live";
 function showTab(name) {
   currentTab = name;
-  $$(".tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === name));
+  const nav = name === "node" ? "nodes" : name;
+  $$(".tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === nav));
   $$(".tab").forEach((s) => (s.hidden = s.id !== `tab-${name}`));
   if (name === "nodes") loadNodes();
   if (name === "channel") loadChannel();
   if (name === "observers") loadObservers();
   if (name === "map") loadMap();
-  store("rradmon.tab", name);
+  if (name !== "node") store("rradmon.tab", name);
 }
-$$(".tabs button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+$$(".tabs button").forEach((b) => (b.onclick = () => {
+  if (location.hash.startsWith("#node=")) history.replaceState(null, "", location.pathname);
+  showTab(b.dataset.tab);
+}));
 
 // ---------- stats strip ----------
 let observers = [];
@@ -332,6 +336,7 @@ function throttledRefresh() {
     refreshTimer = null;
     loadSummary().catch(console.error);
     if (currentTab === "nodes" && Date.now() - lastNodesRefresh > 5000) loadNodes();
+    if (currentTab === "node" && currentNode && Date.now() - lastNodesRefresh > 5000) loadNodePage(currentNode);
     if (currentTab === "channel") loadChannel();
     if (currentTab === "observers") loadObservers();
     if (currentTab === "map") loadMap();
@@ -339,7 +344,14 @@ function throttledRefresh() {
 }
 
 // ---------- nodes ----------
-let selectedNode = null;
+// The Nodes tab is a list; a node opens on a page of its own (#node=<id>).
+let currentNode = null;
+let returnTab = "nodes";
+function perHour(n24) {
+  if (!n24) return "–";
+  const r = n24 / 24;
+  return r < 0.1 ? "&lt;0.1" : r.toFixed(1);
+}
 async function loadNodes() {
   lastNodesRefresh = Date.now();
   const q = $("#nodeSearch").value;
@@ -349,57 +361,92 @@ async function loadNodes() {
     .map((n) => {
       const name = n.name ? esc(n.name) : `<span class="mono">${short(n.identity, 12)}</span>`;
       const apps = (n.apps || []).map((a) => `<span class="tag">${esc(a.replace(/^rnstransport\./, ""))}</span>`).join("");
-      return `<tr data-id="${n.identity}" class="${n.identity === selectedNode ? "sel" : ""}">
+      return `<tr data-id="${n.identity}">
         <td>${name}<div class="muted mono">${short(n.identity, 16)}</div></td>
         <td>${apps || '<span class="muted">relay only</span>'}</td>
         <td title="${new Date(n.last_seen).toLocaleString()}">${ago(n.last_seen)}</td>
         <td class="num">${num(n.last_rssi, 0)}</td>
         <td class="num">${num(n.last_snr, 2)}</td>
         <td class="num">${num(n.avg_rssi_24h, 0)}</td>
+        <td class="num" title="${n.announces_24h} announce${n.announces_24h === 1 ? "" : "s"} in the last 24 h">${perHour(n.announces_24h)}</td>
         <td class="num">${n.announces}</td>
         <td class="num">${n.min_hops ?? "–"}</td></tr>`;
     })
     .join("");
-  $$("#nodesBody tr").forEach((tr) => (tr.onclick = () => openNode(tr.dataset.id)));
-  if (selectedNode) loadNodeDetail(selectedNode, false);
 }
 let searchTimer;
 $("#nodeSearch").oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadNodes, 200); };
+$("#nodesBody").addEventListener("click", (e) => {
+  const tr = e.target.closest("tr[data-id]");
+  if (tr) openNode(tr.dataset.id);
+});
 
+// openNode goes to the node's page; the browser's Back button returns.
 function openNode(id) {
-  if (location.hash !== `#node=${id}`) history.replaceState(null, "", `#node=${id}`);
-  selectedNode = id;
-  if (currentTab !== "nodes") showTab("nodes");
-  $$("#nodesBody tr").forEach((tr) => tr.classList.toggle("sel", tr.dataset.id === id));
-  loadNodeDetail(id, true);
+  if (location.hash === `#node=${id}`) showNodePage(id);
+  else location.hash = `node=${id}`;
 }
+function showNodePage(id) {
+  if (currentTab !== "node") returnTab = currentTab;
+  currentNode = id;
+  showTab("node");
+  scrollTo(0, 0);
+  loadNodePage(id);
+}
+$("#nodeBack").onclick = () => {
+  if (history.length > 1 && location.hash.startsWith("#node=")) history.back();
+  else showTab(returnTab);
+};
+
 const nodeCharts = {};
-async function loadNodeDetail(id, scroll) {
+const OBS_COLORS = ["--s1", "--s2", "--s3"]; // categorical slots, fixed order
+async function loadNodePage(id) {
   let d;
-  try { d = await api(`/api/nodes/${id}`); } catch { return; }
-  if (selectedNode !== id) return;
-  const el = $("#nodeDetail");
-  el.hidden = false;
-  $(".split").classList.add("open");
-  const title = d.name ? esc(d.name) : "Unnamed node";
-  const kv = (k, v) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`;
-  el.innerHTML = `<button class="btn close" id="closeNode">Close</button>
-    <h2>${title}</h2>
-    <div class="mono muted">${d.identity}</div>
-    <div class="kv">
-      ${kv("Last heard", ago(d.last_seen))}
+  try { d = await api(`/api/nodes/${id}`); } catch {
+    $("#nodePage").innerHTML = `<p class="empty">No node with identity <span class="mono">${esc(id)}</span>.</p>`;
+    return;
+  }
+  if (currentNode !== id) return;
+  lastNodesRefresh = Date.now();
+  const kv = (k, v, title = "") => `<div${title ? ` title="${esc(title)}"` : ""}><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  const placed = (d.dests || []).find((x) => x.lat != null);
+  const apps = (d.apps || []).map((a) => `<span class="tag">${esc(a.replace(/^rnstransport\./, ""))}</span>`).join("");
+  $("#nodePage").innerHTML = `
+    <header class="node-head">
+      <h2>${d.name ? esc(d.name) : "Unnamed node"}</h2>
+      <div class="mono muted">${d.identity}</div>
+      <div>${apps || '<span class="muted">seen only as a relay</span>'}</div>
+      ${placed ? `<div class="small">${num(placed.lat, 5)}, ${num(placed.lon, 5)}${placed.height != null ? ` · ${num(placed.height, 0)} m` : ""}
+        <button class="link" data-map="1" data-lat="${placed.lat}" data-lon="${placed.lon}">show on map</button></div>` : ""}
+    </header>
+    <div class="kv kv4">
+      ${kv("Last heard", ago(d.last_seen), new Date(d.last_seen).toLocaleString())}
       ${kv("Last RSSI / SNR", `${num(d.last_rssi, 0)} dBm / ${num(d.last_snr, 2)} dB`)}
-      ${kv("Receptions attributed", d.heard_direct)}
-      ${kv("Announces", d.announces)}
+      ${kv("24 h average", `${num(d.avg_rssi_24h, 0)} dBm / ${num(d.avg_snr_24h, 1)} dB`)}
+      ${kv("Announces per hour", perHour(d.announces_24h), `${d.announces_24h} in the last 24 h`)}
+      ${kv("Announces, all", d.announces)}
       ${kv("Fewest hops", d.min_hops ?? "–")}
-      ${kv("Announces relayed", d.relayed)}
+      ${kv("Receptions attributed", d.heard_direct)}
+      ${kv("Announces relayed", d.relayed, "Other nodes' announces this one rebroadcast")}
     </div>
-    <h3>Signal from this node (last 7 days)</h3>
-    <div class="chart" id="rssiChart"></div>
-    <div class="chart" id="snrChart"></div>
+    <div class="node-grid">
+      <section class="card"><h3>Announces per hour, last 24 h</h3><div class="chart" id="annChart"></div></section>
+      <section class="card"><h3>How each observer hears it, last 24 h</h3>
+        <div class="table-wrap"><table><thead><tr><th>Observer</th><th class="num">Receptions</th>
+          <th class="num">RSSI avg</th><th class="num">min</th><th class="num">max</th><th class="num">SNR avg</th><th class="num">min</th><th>Last</th></tr></thead>
+        <tbody>${(d.per_observer || []).map((o) => `<tr><td>${esc(o.observer)}</td><td class="num">${o.count}</td>
+          <td class="num">${num(o.rssi_avg, 0)}</td><td class="num">${num(o.rssi_min, 0)}</td><td class="num">${num(o.rssi_max, 0)}</td>
+          <td class="num">${num(o.snr_avg, 1)}</td><td class="num">${num(o.snr_min, 1)}</td><td>${ago(o.last)}</td></tr>`).join("") ||
+          '<tr><td colspan="8" class="muted">Nothing attributed to this node in the last 24 h.</td></tr>'}</tbody></table></div>
+      </section>
+    </div>
+    <section class="card"><h3>Signal by observer, last 7 days</h3>
+      <div class="chart" id="rssiChart"></div>
+      <div class="chart" id="snrChart"></div>
+    </section>
     <h3>Destinations</h3>
     <div class="table-wrap"><table><thead><tr><th>Hash</th><th>App</th><th>Name</th><th>Announce says</th><th class="num">Announces</th><th class="num">Hops</th><th>Last seen</th></tr></thead>
-    <tbody>${(d.dests || []).map((x) => `<tr><td class="mono">${short(x.hash, 16)}</td><td>${esc(x.app)}</td><td>${esc(x.name)}</td><td class="notes">${esc(x.info || "")}${x.lat != null ? ` <button class="link" data-map="1" data-lat="${x.lat}" data-lon="${x.lon}">show on map</button>` : ""}</td>
+    <tbody>${(d.dests || []).map((x) => `<tr><td class="mono">${short(x.hash, 16)}</td><td>${esc(x.app)}</td><td>${esc(x.name)}</td><td class="notes">${esc(x.info || "")}</td>
       <td class="num">${x.announces}</td><td class="num">${x.last_hops ?? "–"}</td><td>${ago(x.last_seen)}</td></tr>`).join("") ||
       '<tr><td colspan="7" class="muted">Seen only as a relay (its transport ID); it has not announced a destination here.</td></tr>'}</tbody></table></div>
     <h3>Announce history</h3>
@@ -408,7 +455,7 @@ async function loadNodeDetail(id, scroll) {
       <td class="num">${a.hops}</td><td>${a.valid === "valid" ? "valid" : `<span class="tag bad">${esc(a.valid)}</span>`}</td>
       <td class="num">${a.copies}</td><td class="num">${a.copies > 1 ? dur(a.max_delay) : "–"}</td></tr>`).join("") ||
       '<tr><td colspan="6" class="muted">No announces from this identity.</td></tr>'}</tbody></table></div>`;
-  $$("[data-map]", el).forEach((b) => (b.onclick = async () => {
+  $$("[data-map]", $("#nodePage")).forEach((b) => (b.onclick = async () => {
     showTab("map");
     await loadMap();
     geo.zoom = 14;
@@ -416,19 +463,25 @@ async function loadNodeDetail(id, scroll) {
     geo.cx = p.x; geo.cy = p.y; geo.fitted = true;
     drawMap();
   }));
-  $("#closeNode").onclick = () => {
-    selectedNode = null;
-    el.hidden = true;
-    $(".split").classList.remove("open");
-    $$("#nodesBody tr").forEach((tr) => tr.classList.remove("sel"));
-    history.replaceState(null, "", location.pathname);
-  };
+
+  // Charts. Signal: one series per observer, in a fixed colour order; past
+  // three, the rest share an "other observers" series.
+  const rate = d.announce_rate || [];
+  const t0 = rate.length ? ms(rate[0].hour) : Date.now() - 23 * 3600e3;
+  nodeCharts.ann = { el: "#annChart", opts: { title: "Announces", unit: "per hour", mode: "bar", yMin: 0, minSpan: 4,
+    domain: [t0, t0 + 24 * 3600e3], series: [{ name: "Announces", color: "--s2", pts: rate.map((h) => ({ t: ms(h.hour), v: h.count })) }] } };
   const sig = d.signal || [];
-  nodeCharts.rssi = { el: "#rssiChart", opts: { title: "RSSI", unit: "dBm", mode: "dot", minSpan: 10, series: [{ name: "RSSI", color: "--s1", pts: sig.map((p) => ({ t: ms(p.t), v: p.rssi, note: p.type })) }] } };
-  nodeCharts.snr = { el: "#snrChart", opts: { title: "SNR", unit: "dB", mode: "dot", minSpan: 5, series: [{ name: "SNR", color: "--s1", pts: sig.map((p) => ({ t: ms(p.t), v: p.snr, note: p.type })) }] } };
-  drawChart(nodeCharts.rssi);
-  drawChart(nodeCharts.snr);
-  if (scroll && innerWidth < 900) el.scrollIntoView({ behavior: "smooth" });
+  const obsOrder = [...new Set((d.per_observer || []).map((o) => o.observer).concat(sig.map((p) => p.observer)))];
+  const seriesFor = (field) => {
+    const top = obsOrder.slice(0, 3).map((o, i) => ({ name: o, color: OBS_COLORS[i],
+      pts: sig.filter((p) => p.observer === o).map((p) => ({ t: ms(p.t), v: p[field], note: p.type })) }));
+    const rest = sig.filter((p) => !obsOrder.slice(0, 3).includes(p.observer));
+    if (rest.length) top.push({ name: "other observers", color: "--text-3", pts: rest.map((p) => ({ t: ms(p.t), v: p[field], note: `${p.type} · ${p.observer}` })) });
+    return top;
+  };
+  nodeCharts.rssi = { el: "#rssiChart", opts: { title: "RSSI", unit: "dBm", mode: "dot", minSpan: 10, series: seriesFor("rssi") } };
+  nodeCharts.snr = { el: "#snrChart", opts: { title: "SNR", unit: "dB", mode: "dot", minSpan: 5, series: seriesFor("snr") } };
+  Object.values(nodeCharts).forEach(drawChart);
 }
 
 // ---------- map ----------
@@ -749,6 +802,14 @@ function drawChart({ el, opts }) {
         d += `${brk ? "M" : "L"}${X(p.t).toFixed(1)},${Y(p.v).toFixed(1)}`;
       });
       svg += `<path d="${d}" fill="none" style="stroke:var(${s.color})" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    } else if (opts.mode === "bar") {
+      // One bar per hour, anchored at zero, with a 2px gap between bars
+      const slot = X(x0 + 3600e3) - X(x0);
+      svg += pts.filter((p) => p.v > 0).map((p) => {
+        const top = Y(p.v), base = Y(0);
+        return `<rect x="${(X(p.t) + 1).toFixed(1)}" y="${top.toFixed(1)}" width="${Math.max(1, slot - 2).toFixed(1)}"
+          height="${(base - top).toFixed(1)}" rx="2" style="fill:var(${s.color})"/>`;
+      }).join("");
     } else {
       svg += pts.map((p) => `<circle cx="${X(p.t).toFixed(1)}" cy="${Y(p.v).toFixed(1)}" r="4" style="fill:var(${s.color});stroke:var(--surface)" stroke-width="2"/>`).join("");
     }
@@ -766,14 +827,17 @@ function drawChart({ el, opts }) {
     const mx = (e.clientX - r.left) * k, my = (e.clientY - r.top) * k;
     let best = null, bd = Infinity;
     for (const p of flat) {
-      const d = opts.mode === "line" ? Math.abs(X(p.t) - mx) : Math.hypot(X(p.t) - mx, Y(p.v) - my);
+      const d = opts.mode === "line" ? Math.abs(X(p.t) - mx)
+        : opts.mode === "bar" ? Math.abs(X(p.t + 1800e3) - mx)
+        : Math.hypot(X(p.t) - mx, Y(p.v) - my);
       if (d < bd) { bd = d; best = p; }
     }
-    if (!best || bd > (opts.mode === "line" ? 40 : 24)) { tip.hidden = true; xh.setAttribute("visibility", "hidden"); return; }
+    if (!best || bd > (opts.mode === "line" || opts.mode === "bar" ? 40 : 24)) { tip.hidden = true; xh.setAttribute("visibility", "hidden"); return; }
     xh.setAttribute("x1", X(best.t)); xh.setAttribute("x2", X(best.t)); xh.setAttribute("visibility", "visible");
     const same = opts.mode === "line" ? flat.filter((p) => p.t === best.t) : [best];
-    tip.innerHTML = `<div class="muted">${new Date(best.t).toLocaleString()}</div>` +
-      same.map((p) => `<div><span class="sw" style="background:var(${p.s.color})"></span>${esc(p.s.name)} <b>${num(p.v, opts.unit === "dB" || opts.unit === "%" ? 2 : 0)} ${esc(opts.unit)}</b>${p.note ? ` <span class="muted">${esc(p.note)}</span>` : ""}</div>`).join("");
+    const when = opts.mode === "bar" ? `${new Date(best.t).toLocaleString()} – ${pad(new Date(best.t + 3600e3).getHours())}:00` : new Date(best.t).toLocaleString();
+    tip.innerHTML = `<div class="muted">${when}</div>` +
+      same.map((p) => `<div><span class="sw" style="background:var(${p.s.color})"></span>${esc(p.s.name)} <b>${num(p.v, opts.mode === "bar" ? 0 : opts.unit === "dB" || opts.unit === "%" ? 2 : 0)} ${esc(opts.unit)}</b>${p.note ? ` <span class="muted">${esc(p.note)}</span>` : ""}</div>`).join("");
     tip.hidden = false;
     const tx = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8);
     tip.style.left = `${tx}px`;
@@ -785,13 +849,14 @@ function drawChart({ el, opts }) {
 // ---------- start ----------
 addEventListener("hashchange", () => {
   const m = location.hash.match(/^#node=([0-9a-f]{32})$/);
-  if (m) openNode(m[1]);
+  if (m) showNodePage(m[1]);
+  else if (currentTab === "node") showTab(returnTab);
 });
 (async function start() {
   await loadSummary().catch(console.error);
   await loadFeed().catch(console.error);
   const m = location.hash.match(/^#node=([0-9a-f]{32})$/);
-  if (m) openNode(m[1]);
+  if (m) showNodePage(m[1]);
   else showTab(store("rradmon.tab") || "live");
   connect();
   setInterval(() => loadSummary().catch(console.error), 30000);
