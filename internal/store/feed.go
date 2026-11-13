@@ -33,6 +33,7 @@ type PacketRow struct {
 
 	// The first observation: its observer, signal, hops and frames
 	Observer string   `json:"observer"`
+	FirstObs int64    `json:"first_obs"` // id of that observation (a reception, or for orphans the frame)
 	RSSI     *float64 `json:"rssi"`
 	SNR      *float64 `json:"snr"`
 	Hops     *int64   `json:"hops"`
@@ -89,7 +90,7 @@ func (s *Store) PacketFeed(before, after time.Time, hashPrefix string, limit int
 		SELECT p.id, p.first_seen, p.last_seen, p.pkt_type, p.dest_type, p.dest_hash, p.data_len, p.hash, p.full_hash,
 			p.repeat_of IS NOT NULL, COALESCE(p.proves_unheard, 0), p.proves_orphan,
 			p.first_seen - (SELECT t FROM frame_errors WHERE id = p.proves_orphan),
-			o.ext_id, r.rssi, r.snr, r.hops, r.transport_id, r.frames, COALESCE(r.tx_identity, p.tx_identity),
+			o.ext_id, r.id, r.rssi, r.snr, r.hops, r.transport_id, r.frames, COALESCE(r.tx_identity, p.tx_identity),
 			(SELECT COUNT(*) FROM receptions WHERE packet_id = p.id),
 			(SELECT COUNT(DISTINCT observer_id) FROM receptions WHERE packet_id = p.id),
 			(SELECT COUNT(*) FROM receptions WHERE packet_id = p.id AND partial > 0),
@@ -119,7 +120,7 @@ func (s *Store) PacketFeed(before, after time.Time, hashPrefix string, limit int
 		)
 		if err := rows.Scan(&r.ID, &first, &last, &ptype, &dtype, &dest, &r.Len, &hash, &full,
 			&r.Repeat, &r.ProvesUnheard, &linkID, &linkDelay,
-			&r.Observer, &r.RSSI, &r.SNR, &r.Hops, &via, &r.Frames, &tx,
+			&r.Observer, &r.FirstObs, &r.RSSI, &r.SNR, &r.Hops, &via, &r.Frames, &tx,
 			&r.Receptions, &r.Observers, &r.Partials, &maxD, &absorbed, &dname, &aname); err != nil {
 			rows.Close()
 			return nil, err
@@ -201,7 +202,7 @@ func (s *Store) orphanGroups(catchUp bool, before, after time.Time, limit int) (
 			&group, &r.Receptions, &linkID, &linkDelay); err != nil {
 			return nil, err
 		}
-		r.Kind, r.T, r.LastSeen, r.Frames = "orphan", fromMs(first), fromMs(last), 1
+		r.Kind, r.T, r.LastSeen, r.Frames, r.FirstObs = "orphan", fromMs(first), fromMs(last), 1, r.ID
 		r.LinkID, r.LinkDelayMs = linkID.Int64, linkDelay.Int64
 		if group.Valid && group.String != "" {
 			r.GroupObservers = strings.Split(group.String, ",")
@@ -245,6 +246,7 @@ func (s *Store) nameRows(out []PacketRow) {
 
 // Observation is one reception (or orphaned frame) under an expanded row.
 type Observation struct {
+	ID       int64     `json:"id"` // reception id, or frame id for orphans
 	Observer string    `json:"observer"`
 	T        time.Time `json:"t"`
 	DelayMs  int64     `json:"delay_ms"` // after the row's first complete reception
@@ -262,7 +264,7 @@ type Observation struct {
 
 // PacketObservations lists every reception of a packet, oldest first.
 func (s *Store) PacketObservations(packetID int64) ([]Observation, error) {
-	rows, err := s.DB.Query(`SELECT o.ext_id, r.t_rx, r.delay_ms, r.rssi, r.snr, r.hops, r.transport_id,
+	rows, err := s.DB.Query(`SELECT r.id, o.ext_id, r.t_rx, r.delay_ms, r.rssi, r.snr, r.hops, r.transport_id,
 		r.frames, r.partial, r.tx_identity
 		FROM receptions r JOIN observers o ON o.id = r.observer_id
 		WHERE r.packet_id = ? ORDER BY r.t_rx, r.id`, packetID)
@@ -277,7 +279,7 @@ func (s *Store) PacketObservations(packetID int64) ([]Observation, error) {
 			frames, part int64
 			via, tx      []byte
 		)
-		if err := rows.Scan(&ob.Observer, &t, &ob.DelayMs, &ob.RSSI, &ob.SNR, &ob.Hops, &via, &frames, &part, &tx); err != nil {
+		if err := rows.Scan(&ob.ID, &ob.Observer, &t, &ob.DelayMs, &ob.RSSI, &ob.SNR, &ob.Hops, &via, &frames, &part, &tx); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -308,7 +310,7 @@ func (s *Store) PacketObservations(packetID int64) ([]Observation, error) {
 
 // OrphanObservations lists every observer's copy of an orphan group.
 func (s *Store) OrphanObservations(groupID int64) ([]Observation, error) {
-	rows, err := s.DB.Query(`SELECT o.ext_id, f.t, f.t - (SELECT t FROM frame_errors WHERE id = ?), f.rssi, f.snr, f.kind
+	rows, err := s.DB.Query(`SELECT f.id, o.ext_id, f.t, f.t - (SELECT t FROM frame_errors WHERE id = ?), f.rssi, f.snr, f.kind
 		FROM frame_errors f JOIN observers o ON o.id = f.observer_id
 		WHERE COALESCE(f.group_id, f.id) = ? ORDER BY f.t, f.id`, groupID, groupID)
 	if err != nil {
@@ -319,7 +321,7 @@ func (s *Store) OrphanObservations(groupID int64) ([]Observation, error) {
 	for rows.Next() {
 		var ob Observation
 		var t int64
-		if err := rows.Scan(&ob.Observer, &t, &ob.DelayMs, &ob.RSSI, &ob.SNR, &ob.Part); err != nil {
+		if err := rows.Scan(&ob.ID, &ob.Observer, &t, &ob.DelayMs, &ob.RSSI, &ob.SNR, &ob.Part); err != nil {
 			return nil, err
 		}
 		ob.T, ob.Frames = fromMs(t), "O"

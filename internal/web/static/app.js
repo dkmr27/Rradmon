@@ -185,7 +185,8 @@ async function loadObservations(tb, r) {
   const url = r.kind === "orphan" ? `/api/orphans/${r.id}/observations` : `/api/packets/${r.id}/observations`;
   const list = await api(url);
   [...tb.querySelectorAll("tr.obsrow")].forEach((x) => x.remove());
-  for (const o of list) tb.append(observationRow(o));
+  // The summary line already shows the first observation
+  for (const o of list) if (o.id !== r.first_obs) tb.append(observationRow(o));
 }
 async function toggleGroup(tb) {
   const key = tb.dataset.key;
@@ -220,13 +221,20 @@ function upsert(r, flash) {
   }
   const old = table.querySelector(`tbody[data-key="${key}"]`);
   feed.rows.set(key, r);
+  // Catch-up overlaps by 1 ms, so the latest row comes back unchanged: only
+  // redraw (and flash) when something about the row actually changed
+  const sig = [r.last_seen, r.receptions, r.observers, r.partials, r.link_id, r.max_delay_ms].join("|");
   if (old) {
-    const tr = summaryRow(r);
-    old.querySelector("tr.summary").replaceWith(tr);
-    if (flash) tr.classList.add("new");
-    if (feed.open.has(key)) loadObservations(old, r);
+    if (old.dataset.sig !== sig) {
+      old.dataset.sig = sig;
+      const tr = summaryRow(r);
+      old.querySelector("tr.summary").replaceWith(tr);
+      if (flash) tr.classList.add("new");
+      if (feed.open.has(key)) loadObservations(old, r);
+    }
   } else {
     const tb = buildGroup(r);
+    tb.dataset.sig = sig;
     if (flash) tb.firstChild.classList.add("new");
     insertGroup(table, tb);
   }
