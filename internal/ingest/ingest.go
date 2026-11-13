@@ -57,9 +57,10 @@ type Ingestor struct {
 }
 
 type observer struct {
-	id   int64
-	ext  string
-	reas *reassembly.Reassembler
+	id      int64
+	ext     string
+	reas    *reassembly.Reassembler
+	touched time.Time
 }
 
 // New prepares an ingestor for one radio network.
@@ -74,15 +75,24 @@ func New(st *store.Store, radio Radio, log *slog.Logger) (*Ingestor, error) {
 	return &Ingestor{st: st, radio: radio, network: id, log: log, observers: map[string]*observer{}}, nil
 }
 
+// touchEvery limits how often an observer's last_seen is written.
+const touchEvery = 30 * time.Second
+
 func (in *Ingestor) observer(ext, source string, t time.Time) (*observer, error) {
 	if o, ok := in.observers[ext]; ok {
+		if t.Sub(o.touched) >= touchEvery {
+			o.touched = t
+			if err := in.st.TouchObserver(ext, t); err != nil {
+				return nil, err
+			}
+		}
 		return o, nil
 	}
 	id, err := in.st.Observer(ext, source, t)
 	if err != nil {
 		return nil, err
 	}
-	o := &observer{id: id, ext: ext, reas: reassembly.New(in.radio.SF, in.radio.BandwidthHz, in.radio.CR)}
+	o := &observer{id: id, ext: ext, touched: t, reas: reassembly.New(in.radio.SF, in.radio.BandwidthHz, in.radio.CR)}
 	in.observers[ext] = o
 	return o, nil
 }

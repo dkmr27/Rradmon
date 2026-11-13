@@ -18,9 +18,9 @@ type recorder struct {
 	status int
 }
 
-func (r *recorder) Rx(_, _ string, m *Rx, _, _ time.Time)      { r.rx = append(r.rx, m) }
-func (r *recorder) Chan(_, _ string, _ *Chan, _, _ time.Time)  { r.chans++ }
-func (r *recorder) Status(_, _ string, _ *Status, _ time.Time) { r.status++ }
+func (r *recorder) Rx(_, _ string, m *Rx, _, _ time.Time)                { r.rx = append(r.rx, m) }
+func (r *recorder) Chan(_, _ string, _ *Chan, _, _ time.Time)            { r.chans++ }
+func (r *recorder) Status(_, _ string, _ *Status, _ []byte, _ time.Time) { r.status++ }
 
 func newSub(h Handler, allow ...string) *Subscriber {
 	s := &Subscriber{prefix: DefaultPrefix, h: h, log: slog.New(slog.NewTextHandler(io.Discard, nil)),

@@ -50,6 +50,7 @@ function showTab(name) {
   $$(".tab").forEach((s) => (s.hidden = s.id !== `tab-${name}`));
   if (name === "nodes") loadNodes();
   if (name === "channel") loadChannel();
+  if (name === "observers") loadObservers();
   store("rradmon.tab", name);
 }
 $$(".tabs button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
@@ -182,6 +183,7 @@ function throttledRefresh() {
     loadSummary().catch(console.error);
     if (currentTab === "nodes" && Date.now() - lastNodesRefresh > 5000) loadNodes();
     if (currentTab === "channel") loadChannel();
+    if (currentTab === "observers") loadObservers();
   }, 2000);
 }
 
@@ -283,6 +285,68 @@ $$("#chanRange button").forEach((b) => {
   };
 });
 $("#obsSelect").onchange = loadChannel;
+
+// ---------- observers ----------
+function uptime(s) {
+  if (s == null) return "–";
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  return d ? `${d} d ${h} h` : h ? `${h} h ${m} min` : `${m} min`;
+}
+const STATE_TEXT = { online: "Online", silent: "No data", offline: "Offline" };
+async function loadObservers() {
+  const list = await api("/api/observers");
+  $("#obsEmpty").hidden = list.length > 0;
+  $("#obsGrid").innerHTML = list.map((o) => {
+    const st = o.status || {};
+    const src = o.source === "mqtt" ? "MQTT" : o.source === "rnode-serial" ? "Local RNode" : esc(o.source);
+    const kv = (k, v, title = "") => `<div${title ? ` title="${esc(title)}"` : ""}><div class="k">${k}</div><div class="v">${v}</div></div>`;
+    const sig = o.avg_rssi_1h == null ? "–" : `${num(o.avg_rssi_1h, 0)} dBm / ${num(o.avg_snr_1h, 1)} dB`;
+    const util = o.util_s == null ? "–" : `${num(o.util_s, 1)} % / ${num(o.util_l, 2)} %`;
+    const problems = [];
+    if (o.orphans_24h) problems.push(`${o.orphans_24h} orphan${o.orphans_24h > 1 ? "s" : ""}`);
+    if (o.partial_24h) problems.push(`${o.partial_24h} partial`);
+    if (o.mqtt && o.mqtt.seq_gaps) problems.push(`${o.mqtt.seq_gaps} lost over MQTT`);
+    if (o.mqtt && o.mqtt.invalid) problems.push(`${o.mqtt.invalid} rejected`);
+    if (o.mqtt && o.mqtt.rate_limited) problems.push(`${o.mqtt.rate_limited} rate-limited`);
+    if (st.rx_errors) problems.push(`${st.rx_errors} radio errors`);
+    if (st.mqtt_dropped) problems.push(`${st.mqtt_dropped} dropped by observer`);
+    const extra = [];
+    // Below 2.5 V there is no battery fitted (the divider reads near zero on USB power)
+    if (st.battery_mv >= 2500) extra.push(kv("Battery", `${(st.battery_mv / 1000).toFixed(2)} V`));
+    // A local RNode reports no uptime; show time since Rradmon brought it online
+    let up = st.uptime_s;
+    if (up == null && o.state === "online" && o.source === "rnode-serial" && o.status_t) up = (Date.now() - ms(o.status_t)) / 1000;
+    if (st.rssi_wifi) extra.push(kv("Wi-Fi", `${st.rssi_wifi} dBm`));
+    if (o.lat != null && o.lon != null) extra.push(kv("Position", `${num(o.lat, 4)}, ${num(o.lon, 4)}`));
+    return `<article class="obs-card">
+      <header>
+        <span class="state ${esc(o.state)}"></span>
+        <h3>${esc(o.ext_id)}</h3>
+        <span class="tag">${src}</span>
+        <span class="state-text">${STATE_TEXT[o.state] || esc(o.state)}</span>
+      </header>
+      <div class="muted small">${esc(o.firmware) || "firmware not reported"}${o.software ? " · " + esc(o.software) : ""}</div>
+      <div class="kv">
+        ${kv("Last heard", ago(o.last_seen), new Date(o.last_seen).toLocaleString())}
+        ${kv("Uptime", uptime(up))}
+        ${kv("Received 1 h / 24 h", `${o.rx_1h} / ${o.rx_24h}`)}
+        ${kv("Only here, 24 h", `${o.only_here_24h} of ${o.packets_24h}`, "Packets no other observer heard")}
+        ${kv("Signal, 1 h avg", sig)}
+        ${kv("Utilisation short / long", util)}
+        ${kv("Noise floor", o.noise_floor == null ? "–" : `${num(o.noise_floor, 0)} dBm`)}
+        ${extra.join("")}
+      </div>
+      <div class="obs-foot">
+        <span class="${problems.length ? "" : "muted"}">${problems.length ? problems.join(" · ") : "No losses or errors recorded"}</span>
+        ${o.chan_t ? `<button class="link" data-chan="${o.id}">Channel history</button>` : ""}
+      </div>
+    </article>`;
+  }).join("");
+  $$("#obsGrid [data-chan]").forEach((b) => (b.onclick = () => {
+    $("#obsSelect").value = b.dataset.chan;
+    showTab("channel");
+  }));
+}
 async function loadChannel() {
   const id = $("#obsSelect").value || (observers[0] && observers[0].id);
   if (!id) return;

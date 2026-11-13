@@ -14,7 +14,8 @@ import (
 type Handler interface {
 	Rx(network, observer string, m *Rx, tRx, tObs time.Time)
 	Chan(network, observer string, m *Chan, tRx, tObs time.Time)
-	Status(network, observer string, m *Status, tRx time.Time)
+	// raw is the message as received, for fields beyond Status.
+	Status(network, observer string, m *Status, raw []byte, tRx time.Time)
 }
 
 // Limits on inbound data (spec §5: inbound data is untrusted).
@@ -217,7 +218,7 @@ func (s *Subscriber) handle(topic string, payload []byte, now time.Time) {
 			bad(errObs)
 			return
 		}
-		s.h.Status(network, obs, &m, now)
+		s.h.Status(network, obs, &m, payload, now)
 	}
 }
 

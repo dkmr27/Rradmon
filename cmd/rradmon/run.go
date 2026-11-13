@@ -22,6 +22,7 @@ import (
 	"github.com/dkmr27/Rradmon/internal/reticulum"
 	"github.com/dkmr27/Rradmon/internal/rnode"
 	"github.com/dkmr27/Rradmon/internal/store"
+	"github.com/dkmr27/Rradmon/internal/web"
 )
 
 // runRun reads an RNode and/or MQTT observers and stores everything heard.
@@ -89,6 +90,16 @@ func runRun(args []string) error {
 			return err
 		}
 		defer sub.Close()
+		if ws != nil {
+			ws.Counters = func() map[string]web.Counters {
+				out := map[string]web.Counters{}
+				for id, c := range sub.Stats() {
+					out[id] = web.Counters{Accepted: c.Accepted, Invalid: c.Invalid,
+						RateLimited: c.RateLimited, SeqGaps: c.SeqGaps}
+				}
+				return out
+			}
+		}
 		fmt.Fprintf(os.Stderr, "Subscribed to %s for network %s.\n", broker.Redacted(), radio.Slug())
 	}
 
@@ -114,8 +125,16 @@ func runRun(args []string) error {
 		}
 		devDone = dev.Done()
 		info := dev.Info()
-		fmt.Fprintf(os.Stderr, "RNode firmware %d.%d on %s.\n",
-			info.FirmwareMajor, info.FirmwareMinor, rnode.PlatformName(info.Platform))
+		fw := fmt.Sprintf("RNode %d.%d %s", info.FirmwareMajor, info.FirmwareMinor, rnode.PlatformName(info.Platform))
+		fmt.Fprintf(os.Stderr, "%s.\n", fw)
+		local := "rnode:" + *port
+		if err := st.ObserverStatus(local, "rnode-serial", time.Now(), store.ObserverState{
+			Online: true, Firmware: fw, Software: "rradmon " + version}); err != nil {
+			return err
+		}
+		defer func() {
+			st.ObserverStatus(local, "rnode-serial", time.Now(), store.ObserverState{Online: false})
+		}()
 	}
 	fmt.Fprintf(os.Stderr, "Storing in %s. Ctrl+C to stop.\n", *dbPath)
 

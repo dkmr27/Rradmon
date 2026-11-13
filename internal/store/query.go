@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -451,4 +452,121 @@ func (s *Store) Channel(observerID int64, since time.Time, max int) ([]ChannelPo
 		out = append(out, best)
 	}
 	return out, nil
+}
+
+// ObserverView is one observer on the Observers page.
+type ObserverView struct {
+	ID        int64     `json:"id"`
+	ExtID     string    `json:"ext_id"`
+	Source    string    `json:"source"`
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
+	// State: "online" (heard recently), "offline" (said so, e.g. its MQTT last
+	// will), or "silent" (claims online but nothing heard for a while).
+	State    string         `json:"state"`
+	StatusT  *time.Time     `json:"status_t,omitempty"`
+	Firmware string         `json:"firmware,omitempty"`
+	Software string         `json:"software,omitempty"`
+	Lat      *float64       `json:"lat,omitempty"`
+	Lon      *float64       `json:"lon,omitempty"`
+	Status   map[string]any `json:"status,omitempty"` // selected fields of its last status message
+
+	Rx1h        int64    `json:"rx_1h"`
+	Rx24h       int64    `json:"rx_24h"`
+	Packets24h  int64    `json:"packets_24h"`
+	OnlyHere24h int64    `json:"only_here_24h"` // packets no other observer heard
+	Partial24h  int64    `json:"partial_24h"`
+	Orphans24h  int64    `json:"orphans_24h"` // unmatched halves and unusable frames
+	AvgRSSI1h   *float64 `json:"avg_rssi_1h"`
+	AvgSNR1h    *float64 `json:"avg_snr_1h"`
+
+	ChanT      *time.Time `json:"chan_t,omitempty"`
+	UtilShort  *float64   `json:"util_s"`
+	UtilLong   *float64   `json:"util_l"`
+	NoiseFloor *float64   `json:"noise_floor"`
+}
+
+// SilentAfter is how long without data before an observer that claims to be
+// online is shown as silent. Rrobs sends a status every 60 s.
+const SilentAfter = 3 * time.Minute
+
+// statusFields are the status-message fields shown on the page, when present.
+var statusFields = []string{"uptime_s", "rx_frames", "rx_errors", "mqtt_dropped", "battery_mv", "rssi_wifi"}
+
+// Observers lists every observer with its health figures, most recently
+// heard first.
+func (s *Store) Observers(now time.Time) ([]ObserverView, error) {
+	hour, day := ms(now.Add(-time.Hour)), ms(now.Add(-24*time.Hour))
+	rows, err := s.DB.Query(`
+		SELECT o.id, o.ext_id, COALESCE(o.source,''), o.first_seen, o.last_seen, o.online, o.status_t,
+			COALESCE(o.firmware,''), COALESCE(o.software,''), o.lat, o.lon, COALESCE(o.status_json,''),
+			(SELECT COUNT(*) FROM receptions r WHERE r.observer_id = o.id AND r.t_rx >= ?1),
+			(SELECT COUNT(*) FROM receptions r WHERE r.observer_id = o.id AND r.t_rx >= ?2),
+			(SELECT COUNT(DISTINCT packet_id) FROM receptions r WHERE r.observer_id = o.id AND r.t_rx >= ?2),
+			(SELECT COUNT(DISTINCT r.packet_id) FROM receptions r WHERE r.observer_id = o.id AND r.t_rx >= ?2
+				AND NOT EXISTS (SELECT 1 FROM receptions x WHERE x.packet_id = r.packet_id AND x.observer_id <> o.id)),
+			(SELECT COUNT(*) FROM receptions r WHERE r.observer_id = o.id AND r.t_rx >= ?2 AND r.partial > 0),
+			(SELECT COUNT(*) FROM frame_errors f WHERE f.observer_id = o.id AND f.t >= ?2 AND f.matched_packet_id IS NULL),
+			(SELECT AVG(rssi) FROM receptions r WHERE r.observer_id = o.id AND r.t_rx >= ?1),
+			(SELECT AVG(snr) FROM receptions r WHERE r.observer_id = o.id AND r.t_rx >= ?1),
+			c.t, c.util_s, c.util_l, c.noise_floor
+		FROM observers o
+		LEFT JOIN channel_stats c ON c.rowid = (SELECT rowid FROM channel_stats
+			WHERE observer_id = o.id ORDER BY t DESC LIMIT 1)
+		ORDER BY o.last_seen DESC`, hour, day)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ObserverView
+	for rows.Next() {
+		var (
+			v              ObserverView
+			first, last    int64
+			online         sql.NullBool
+			statusT, chanT sql.NullInt64
+			raw            string
+		)
+		if err := rows.Scan(&v.ID, &v.ExtID, &v.Source, &first, &last, &online, &statusT,
+			&v.Firmware, &v.Software, &v.Lat, &v.Lon, &raw,
+			&v.Rx1h, &v.Rx24h, &v.Packets24h, &v.OnlyHere24h, &v.Partial24h, &v.Orphans24h,
+			&v.AvgRSSI1h, &v.AvgSNR1h, &chanT, &v.UtilShort, &v.UtilLong, &v.NoiseFloor); err != nil {
+			return nil, err
+		}
+		v.FirstSeen, v.LastSeen = fromMs(first), fromMs(last)
+		if statusT.Valid {
+			t := fromMs(statusT.Int64)
+			v.StatusT = &t
+		}
+		if chanT.Valid {
+			t := fromMs(chanT.Int64)
+			v.ChanT = &t
+		}
+		recent := now.Sub(v.LastSeen) < SilentAfter
+		switch {
+		case online.Valid && !online.Bool:
+			v.State = "offline"
+		case recent:
+			v.State = "online"
+		default:
+			v.State = "silent"
+		}
+		if raw != "" {
+			var m map[string]any
+			if json.Unmarshal([]byte(raw), &m) == nil {
+				for _, k := range statusFields {
+					if val, ok := m[k]; ok {
+						if _, isNum := val.(float64); isNum {
+							if v.Status == nil {
+								v.Status = map[string]any{}
+							}
+							v.Status[k] = val
+						}
+					}
+				}
+			}
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }

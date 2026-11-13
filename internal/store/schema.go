@@ -159,4 +159,12 @@ CREATE TABLE settings (
 	value TEXT NOT NULL
 );
 `,
+	// 2: observer status as reported (MQTT status message, or the local RNode)
+	`
+ALTER TABLE observers ADD COLUMN online      INTEGER;
+ALTER TABLE observers ADD COLUMN firmware    TEXT;
+ALTER TABLE observers ADD COLUMN software    TEXT;
+ALTER TABLE observers ADD COLUMN status_t    INTEGER;  -- when the last status arrived
+ALTER TABLE observers ADD COLUMN status_json TEXT;     -- the last status message, as received
+`,
 }

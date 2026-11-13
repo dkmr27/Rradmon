@@ -92,17 +92,46 @@ func (s *Store) Observer(extID, source string, t time.Time) (int64, error) {
 	return id, err
 }
 
-// ObserverStatus records an observer's reported status: it updates last_seen
-// and, when given, its position.
-func (s *Store) ObserverStatus(extID, source string, t time.Time, online bool, lat, lon *float64) error {
-	if _, err := s.Observer(extID, source, t); err != nil {
+// ObserverState is what an observer reports about itself.
+type ObserverState struct {
+	Online   bool
+	Firmware string
+	Software string
+	Lat, Lon *float64
+	// Raw is the status message as received (JSON), kept for fields the
+	// UI shows when present (uptime, counters, battery). Empty keeps the old.
+	Raw string
+}
+
+// ObserverStatus records an observer's reported status. An offline report
+// (an MQTT last will) does not move last_seen, which stays the last time the
+// observer itself was heard.
+func (s *Store) ObserverStatus(extID, source string, t time.Time, st ObserverState) error {
+	// Create it if new, without touching last_seen of a known observer: a
+	// retained offline status from yesterday must not make it look seen now.
+	if _, err := s.DB.Exec(`INSERT INTO observers (ext_id, name, source, first_seen, last_seen)
+		VALUES (?,?,?,?,?) ON CONFLICT(ext_id) DO NOTHING`, extID, extID, source, ms(t), ms(t)); err != nil {
 		return err
 	}
-	if lat != nil && lon != nil {
-		_, err := s.DB.Exec(`UPDATE observers SET lat = ?, lon = ? WHERE ext_id = ?`, *lat, *lon, extID)
-		return err
+	if st.Online {
+		if err := s.TouchObserver(extID, t); err != nil {
+			return err
+		}
 	}
-	return nil
+	_, err := s.DB.Exec(`UPDATE observers SET online = ?, status_t = ?,
+		firmware = COALESCE(NULLIF(?, ''), firmware),
+		software = COALESCE(NULLIF(?, ''), software),
+		status_json = COALESCE(NULLIF(?, ''), status_json),
+		lat = COALESCE(?, lat), lon = COALESCE(?, lon)
+		WHERE ext_id = ?`,
+		st.Online, ms(t), st.Firmware, st.Software, st.Raw, st.Lat, st.Lon, extID)
+	return err
+}
+
+// TouchObserver moves an observer's last_seen forward.
+func (s *Store) TouchObserver(extID string, t time.Time) error {
+	_, err := s.DB.Exec(`UPDATE observers SET last_seen = MAX(last_seen, ?) WHERE ext_id = ?`, ms(t), extID)
+	return err
 }
 
 // Settings with their defaults (spec §7).

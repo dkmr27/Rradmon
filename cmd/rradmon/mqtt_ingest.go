@@ -55,11 +55,12 @@ func (h *mqttIngest) Chan(network, observer string, m *mqtt.Chan, tRx, tObs time
 	}
 }
 
-func (h *mqttIngest) Status(network, observer string, m *mqtt.Status, tRx time.Time) {
+func (h *mqttIngest) Status(network, observer string, m *mqtt.Status, raw []byte, tRx time.Time) {
 	if h.wrongNetwork(network, observer) {
 		return
 	}
-	if err := h.st.ObserverStatus(observer, "mqtt", tRx, m.Online, m.Lat, m.Lon); err != nil {
+	if err := h.st.ObserverStatus(observer, "mqtt", tRx, store.ObserverState{Online: m.Online,
+		Firmware: m.Firmware, Software: m.Software, Lat: m.Lat, Lon: m.Lon, Raw: string(raw)}); err != nil {
 		h.log.Error("observer status failed", "observer", observer, "err", err)
 	}
 	h.log.Info("observer status", "observer", observer, "online", m.Online, "fw", m.Firmware)

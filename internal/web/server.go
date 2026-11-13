@@ -35,6 +35,10 @@ type Server struct {
 	// when listening on 127.0.0.1 (the default).
 	LoopbackOnly bool
 
+	// Counters, if set, returns live per-observer MQTT counters since this
+	// server started (they are not stored).
+	Counters func() map[string]Counters
+
 	mu   sync.Mutex
 	subs map[chan time.Time]struct{}
 }
@@ -59,6 +63,7 @@ func New(st *store.Store, log *slog.Logger) *Server {
 	s.mux.HandleFunc("GET /api/nodes/{id}", s.node)
 	s.mux.HandleFunc("GET /api/channel/{observer}", s.channel)
 	s.mux.HandleFunc("GET /api/stream", s.stream)
+	s.mux.HandleFunc("GET /api/observers", s.observers)
 	return s
 }
 
@@ -214,6 +219,40 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			fl.Flush()
 		}
 	}
+}
+
+// Counters are an MQTT observer's message counts since the server started.
+type Counters struct {
+	Accepted    uint64 `json:"accepted"`
+	Invalid     uint64 `json:"invalid"`
+	RateLimited uint64 `json:"rate_limited"`
+	SeqGaps     uint64 `json:"seq_gaps"`
+}
+
+type observerJSON struct {
+	store.ObserverView
+	MQTT *Counters `json:"mqtt,omitempty"`
+}
+
+func (s *Server) observers(w http.ResponseWriter, r *http.Request) {
+	views, err := s.st.Observers(time.Now())
+	if err != nil {
+		s.writeJSON(w, nil, err)
+		return
+	}
+	var counters map[string]Counters
+	if s.Counters != nil {
+		counters = s.Counters()
+	}
+	out := make([]observerJSON, 0, len(views))
+	for _, v := range views {
+		o := observerJSON{ObserverView: v}
+		if c, ok := counters[v.ExtID]; ok {
+			o.MQTT = &c
+		}
+		out = append(out, o)
+	}
+	s.writeJSON(w, out, nil)
 }
 
 func nonNil[T any](s []T) []T {

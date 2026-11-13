@@ -156,6 +156,19 @@ a.node:hover, button.link:hover { text-decoration: underline; }
 .kv .v { font-weight: 600; font-variant-numeric: tabular-nums; }
 .detail table th, .detail table td { padding: 4px 8px; font-size: 13px; }
 
+.hint { color: var(--text-2); margin: 0 0 12px; max-width: 70ch; }
+.small { font-size: 12px; }
+.obs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr)); gap: 16px; }
+.obs-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+.obs-card header { display: flex; align-items: center; gap: 8px; }
+.obs-card h3 { margin: 0; font-size: 15px; font-family: var(--mono); }
+.obs-card .state-text { margin-left: auto; font-size: 12px; color: var(--text-2); }
+.state { width: 10px; height: 10px; border-radius: 50%; background: var(--text-3); flex: none; box-sizing: border-box; }
+.state.online { background: var(--good); }
+.state.silent { background: var(--warn); }
+.state.offline { background: transparent; border: 2px solid var(--text-3); }
+.obs-card .kv { grid-template-columns: repeat(2, 1fr); }
+.obs-foot { display: flex; justify-content: space-between; gap: 12px; margin-top: 10px; font-size: 13px; color: var(--text-2); }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px 16px 12px; margin-bottom: 16px; }
 .chart { position: relative; width: 100%; }
 .chart svg { display: block; width: 100%; height: auto; overflow: visible; }

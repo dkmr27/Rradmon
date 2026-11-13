@@ -13,6 +13,7 @@
   <nav class="tabs" role="tablist">
     <button role="tab" data-tab="live" aria-selected="true">Live</button>
     <button role="tab" data-tab="nodes">Nodes</button>
+    <button role="tab" data-tab="observers">Observers</button>
     <button role="tab" data-tab="channel">Channel</button>
   </nav>
   <button class="theme" id="themeBtn" title="Toggle light/dark">◐</button>
@@ -61,6 +62,13 @@
       </div>
       <aside id="nodeDetail" class="detail" hidden></aside>
     </div>
+  </section>
+
+  <section id="tab-observers" class="tab" hidden>
+    <p class="hint">Each observer is a radio feeding Rradmon: a local RNode, or a remote one over MQTT.
+      "Only here" counts packets in the last 24 h that no other observer heard.</p>
+    <div class="obs-grid" id="obsGrid"></div>
+    <p class="empty" id="obsEmpty" hidden>No observers yet.</p>
   </section>
 
   <section id="tab-channel" class="tab" hidden>
