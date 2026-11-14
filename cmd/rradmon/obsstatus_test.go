@@ -41,3 +41,16 @@ func TestOfflineStatusOfUnknownObserver(t *testing.T) {
 		t.Fatalf("obs-b: %+v", o)
 	}
 }
+
+func TestObserverKnown(t *testing.T) {
+	_, st, _ := adminFixture(t, false)
+	if k, err := st.ObserverKnown("obs-k"); err != nil || k {
+		t.Fatalf("unknown: %v %v", k, err)
+	}
+	if err := st.ObserverStatus("obs-k", "mqtt", time.Now(), store.ObserverState{Online: true}); err != nil {
+		t.Fatal(err)
+	}
+	if k, _ := st.ObserverKnown("obs-k"); !k {
+		t.Error("known observer reported unknown")
+	}
+}

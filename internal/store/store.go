@@ -187,6 +187,13 @@ func (s *Store) ObserverStatus(extID, source string, t time.Time, st ObserverSta
 	return err
 }
 
+// ObserverKnown reports whether an observer is in the database.
+func (s *Store) ObserverKnown(extID string) (bool, error) {
+	var n int
+	err := s.DB.QueryRow(`SELECT COUNT(*) FROM observers WHERE ext_id = ?`, extID).Scan(&n)
+	return n > 0, err
+}
+
 // TouchObserver moves an observer's last_seen forward.
 func (s *Store) TouchObserver(extID string, t time.Time) error {
 	_, err := s.DB.Exec(`UPDATE observers SET last_seen = MAX(last_seen, ?) WHERE ext_id = ?`, ms(t), extID)

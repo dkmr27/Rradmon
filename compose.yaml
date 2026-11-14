@@ -1,6 +1,7 @@
-# Rradmon as a server reading MQTT observers. Copy the settings below into
-# a file named .env next to this one (it is git-ignored) and put the broker
-# password in secret/mqtt_password (also git-ignored), then:
+# Rradmon as a server reading MQTT observers. Put the settings below in a
+# file named .env next to this one (it is git-ignored), put the broker
+# password in secret/mqtt_password (also git-ignored) and let the container
+# read it (sudo chown 65532 secret/mqtt_password), then:
 #
 #   docker compose up -d
 #   docker compose exec rradmon rradmon admin set-password
@@ -8,7 +9,22 @@
 # .env:
 #   RRADMON_MQTT_URL=tcp://192.168.1.10:1883
 #   RRADMON_MQTT_USER=rradmon
-#   RRADMON_PORT=127.0.0.1:8080   # host address for the web UI; 8080 alone opens it to the network
+#   RRADMON_WEB=8080
+#
+# RRADMON_WEB is where the host offers the web UI: 127.0.0.1:8080 (the
+# default) for this machine only, 8080 for your network as well.
+#
+# A local RNode as well: create compose.override.yaml (git-ignored; Compose
+# reads it automatically) with the device, its group, and the port to read.
+# The group is the fourth column of "ls -ln /dev/ttyACM0" (46 or 20 on a
+# Raspberry Pi):
+#
+#   services:
+#     rradmon:
+#       devices: ["/dev/ttyACM0"]
+#       group_add: ["46"]
+#       environment:
+#         RRADMON_SERIAL: /dev/ttyACM0
 
 services:
   rradmon:
@@ -18,18 +34,11 @@ services:
     command: ["run", "-mqtt", "${RRADMON_MQTT_URL:?set in .env}", "-mqtt-user", "${RRADMON_MQTT_USER:?set in .env}",
               "-mqtt-pass-file", "/run/secrets/mqtt_password", "-quiet"]
     ports:
-      - "${RRADMON_PORT:-127.0.0.1:8080}:8080"
+      - "${RRADMON_WEB:-127.0.0.1:8080}:8080"
     volumes:
       - rradmon-data:/data
     secrets:
       - mqtt_password
-    # A local RNode as well: uncomment, set the device, and give the
-    # container the device's group (ls -n /dev/ttyUSB0 shows its gid)
-    # devices:
-    #   - /dev/ttyUSB0
-    # group_add:
-    #   - "20"
-    # and add "-port", "/dev/ttyUSB0" to the command
 
 volumes:
   rradmon-data:

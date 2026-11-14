@@ -59,6 +59,13 @@ func (h *mqttIngest) Status(network, observer string, m *mqtt.Status, raw []byte
 	if h.wrongNetwork(network, observer) {
 		return
 	}
+	if !m.Online {
+		// The broker keeps the last will of every observer that ever
+		// connected; one this server never knew is not news
+		if known, err := h.st.ObserverKnown(observer); err == nil && !known {
+			return
+		}
+	}
 	if err := h.st.ObserverStatus(observer, "mqtt", tRx, store.ObserverState{Online: m.Online,
 		Firmware: m.Firmware, Software: m.Software, Lat: m.Lat, Lon: m.Lon, Raw: string(raw)}); err != nil {
 		h.log.Error("observer status failed", "observer", observer, "err", err)

@@ -199,8 +199,26 @@ With Docker Compose, using the included [compose.yaml](compose.yaml):
    ```
 
 The web UI is then at http://localhost:8080. To open it to your network, add
-`RRADMON_PORT=8080` to `.env` (see Security first). `docker compose logs -f`
+`RRADMON_WEB=8080` to `.env` (see Security first). `docker compose logs -f`
 shows the log.
+
+To read an RNode on the Docker host as well, create `compose.override.yaml`
+next to `compose.yaml` (Compose reads it automatically; it is git-ignored):
+
+```yaml
+services:
+  rradmon:
+    devices: ["/dev/ttyACM0"]
+    group_add: ["46"]
+    environment:
+      RRADMON_SERIAL: /dev/ttyACM0
+```
+
+Use your RNode's device. `group_add` is the device's group number, the
+fourth column of `ls -ln /dev/ttyACM0` (46 or 20 on a Raspberry Pi);
+without it the container's user cannot open the port. If the RNode is
+unplugged, Rradmon stops and Docker restarts it; the device has to be
+plugged in for the container to start.
 
 Without Compose:
 
@@ -210,8 +228,7 @@ docker run -d --name rradmon --restart unless-stopped -p 127.0.0.1:8080:8080 \
   rradmon run -mqtt tcp://192.168.1.10:1883 -mqtt-user rradmon -mqtt-pass-file /run/secrets/mqtt_password -quiet
 ```
 
-An RNode on the Docker host works too: pass the device and its group, and
-add `-port`:
+With an RNode, pass the device and its group, and add `-port`:
 
 ```
 docker run ... --device /dev/ttyUSB0 --group-add "$(stat -c %g /dev/ttyUSB0)" \

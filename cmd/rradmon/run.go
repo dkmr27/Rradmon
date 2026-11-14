@@ -28,7 +28,7 @@ import (
 // runRun reads an RNode and/or MQTT observers and stores everything heard.
 func runRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	port := fs.String("port", "", "serial port of a local RNode, e.g. COM32")
+	port := fs.String("port", os.Getenv("RRADMON_SERIAL"), "serial port of a local RNode, e.g. COM32 ($RRADMON_SERIAL sets the default)")
 	dbPath := fs.String("db", "rradmon.db", "database file")
 	freq := fs.Uint("freq", 925875000, "frequency, Hz")
 	bw := fs.Uint("bw", 250000, "bandwidth, Hz")
