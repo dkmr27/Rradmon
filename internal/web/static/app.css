@@ -327,4 +327,14 @@ button.hash { white-space: nowrap; font-size: 12px; }
 .setting.changed .lbl::after { content: " •"; color: var(--accent); }
 @media (max-width: 600px) { .setting { grid-template-columns: 1fr; } .setting .help { grid-column: 1; } }
 .maint { max-width: 760px; margin-top: 16px; }
+#pinDlg { width: min(600px, calc(100vw - 32px)); }
+.pick-hint { margin: 10px 0 6px; }
+.map.pick-map { height: 280px; cursor: crosshair; touch-action: none; }
+.map.pick-map.dragging { cursor: grabbing; }
+.pick-ref { position: absolute; width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); transform: translate(-50%, -50%);
+  border: 1px solid var(--surface); pointer-events: none; }
+.pick-ref.obs { border-radius: 1px; background: var(--accent); transform: translate(-50%, -50%) rotate(45deg); }
+.pick-pin { position: absolute; width: 18px; height: 18px; transform: translate(-50%, -100%); pointer-events: none; }
+.pick-pin::before { content: ""; position: absolute; inset: 0; border-radius: 50% 50% 50% 0; transform: rotate(-45deg);
+  background: var(--bad); border: 2px solid var(--surface); box-shadow: 0 1px 3px rgb(0 0 0 / .4); }
 .pin-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

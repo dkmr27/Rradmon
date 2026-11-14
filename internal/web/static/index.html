@@ -206,6 +206,16 @@
       <label>Height, m (optional) <input id="pinHeight" type="number" step="any" min="-500" max="10000"></label>
       <label>Note (optional) <input id="pinNote" type="text" maxlength="200"></label>
     </div>
+    <p class="muted small pick-hint">Or click the map to pick the point; drag to move, scroll or +/− to zoom.</p>
+    <div class="map pick-map" id="pickMap">
+      <div id="pickLayer"></div>
+      <div class="map-ctl">
+        <button type="button" id="pickIn" class="btn" title="Zoom in">+</button>
+        <button type="button" id="pickOut" class="btn" title="Zoom out">−</button>
+        <span id="pickZoom" class="muted small"></span>
+      </div>
+      <div class="map-attr">Tiles © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors</div>
+    </div>
     <p class="small err" id="pinErr" role="alert"></p>
     <div class="form-row end">
       <button type="button" class="btn danger" id="pinClear">Remove pin</button>

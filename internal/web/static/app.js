@@ -656,24 +656,35 @@ function recency(t) {
   return age < 3600e3 ? "fresh" : age < 86400e3 ? "day" : "old";
 }
 const RECENCY_TEXT = { fresh: "heard in the last hour", day: "heard in the last day", old: "not heard for over a day" };
+// The OpenStreetMap tiles covering a view (left, top: world pixels of its top-left corner)
+function tilesHTML(z, left, top, W, H) {
+  const n = 2 ** z;
+  let html = "";
+  const x0 = Math.floor(left / TILE), x1 = Math.floor((left + W) / TILE);
+  const y0 = Math.max(0, Math.floor(top / TILE)), y1 = Math.min(n - 1, Math.floor((top + H) / TILE));
+  for (let ty = y0; ty <= y1; ty++) {
+    for (let tx = x0; tx <= x1; tx++) {
+      const wx = ((tx % n) + n) % n;
+      html += `<img class="tile" alt="" draggable="false" style="left:${tx * TILE - left}px;top:${ty * TILE - top}px"
+        src="https://tile.openstreetmap.org/${z}/${wx}/${ty}.png">`;
+    }
+  }
+  return html;
+}
+// World pixels back to a position
+function unproject(x, y, z) {
+  const s = TILE * 2 ** z;
+  const lon = (x / s) * 360 - 180;
+  const lat = (Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / s))) * 180) / Math.PI;
+  return { lat, lon: ((((lon + 180) % 360) + 360) % 360) - 180 };
+}
 function drawMap() {
   const el = $("#map");
   const W = el.clientWidth, H = el.clientHeight;
   if (!W) return;
   const z = geo.zoom, n = 2 ** z;
   const left = geo.cx - W / 2, top = geo.cy - H / 2;
-  let html = "";
-  if (geo.tiles) {
-    const x0 = Math.floor(left / TILE), x1 = Math.floor((left + W) / TILE);
-    const y0 = Math.max(0, Math.floor(top / TILE)), y1 = Math.min(n - 1, Math.floor((top + H) / TILE));
-    for (let ty = y0; ty <= y1; ty++) {
-      for (let tx = x0; tx <= x1; tx++) {
-        const wx = ((tx % n) + n) % n;
-        html += `<img class="tile" alt="" draggable="false" style="left:${tx * TILE - left}px;top:${ty * TILE - top}px"
-          src="https://tile.openstreetmap.org/${z}/${wx}/${ty}.png">`;
-      }
-    }
-  }
+  let html = geo.tiles ? tilesHTML(z, left, top, W, H) : "";
   const d = geo.data || { nodes: [], observers: [] };
   // Paths from the selected observer to the placed nodes it heard directly
   const so = d.observers.find((o) => o.id === geo.sel);
@@ -1257,8 +1268,109 @@ function showPinDialog(target, p, fallback) {
   $("#pinErr").textContent = "";
   $("#pinDlg").showModal();
   $("#pinLat").focus();
+  pickOpen();
 }
 $("#pinCancel").onclick = () => $("#pinDlg").close();
+
+// A small map in the position form: click to pick the point. Other placed
+// nodes and observers are shown for reference.
+const pick = { zoom: 2, cx: 0, cy: 0, down: null };
+function pickValue() {
+  const lat = parseFloat($("#pinLat").value), lon = parseFloat($("#pinLon").value);
+  return Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && !(lat === 0 && lon === 0)
+    ? { lat, lon } : null;
+}
+async function pickOpen() {
+  if (!geo.data) { try { geo.data = await api("/api/map"); } catch { /* the map still works without them */ } }
+  const v = pickValue();
+  const refs = [...(geo.data?.nodes || []), ...(geo.data?.observers || [])];
+  let c = v, z = 14;
+  if (!c && refs.length) {
+    c = { lat: refs.reduce((a, p) => a + p.lat, 0) / refs.length, lon: refs.reduce((a, p) => a + p.lon, 0) / refs.length };
+    z = 11;
+  }
+  if (!c) { c = { lat: 0, lon: 0 }; z = 2; }
+  pick.zoom = z;
+  const p = project(c.lat, c.lon, z);
+  pick.cx = p.x; pick.cy = p.y;
+  pickDraw();
+}
+function pickDraw() {
+  const el = $("#pickMap");
+  const W = el.clientWidth, H = el.clientHeight;
+  if (!W) return;
+  const z = pick.zoom, left = pick.cx - W / 2, top = pick.cy - H / 2;
+  let html = geo.tiles ? tilesHTML(z, left, top, W, H) : "";
+  for (const o of geo.data?.observers || []) {
+    const p = project(o.lat, o.lon, z);
+    html += `<i class="pick-ref obs" style="left:${p.x - left}px;top:${p.y - top}px"></i>`;
+  }
+  for (const nd of geo.data?.nodes || []) {
+    const p = project(nd.lat, nd.lon, z);
+    html += `<i class="pick-ref" style="left:${p.x - left}px;top:${p.y - top}px"></i>`;
+  }
+  const v = pickValue();
+  if (v) {
+    const p = project(v.lat, v.lon, z);
+    html += `<i class="pick-pin" style="left:${p.x - left}px;top:${p.y - top}px"></i>`;
+  }
+  $("#pickLayer").innerHTML = html;
+  $("#pickZoom").textContent = `zoom ${z}`;
+}
+function pickZoom(z, ax, ay) {
+  const el = $("#pickMap");
+  z = Math.max(2, Math.min(18, z));
+  if (z === pick.zoom) return;
+  ax ??= el.clientWidth / 2; ay ??= el.clientHeight / 2;
+  const wx = pick.cx - el.clientWidth / 2 + ax, wy = pick.cy - el.clientHeight / 2 + ay;
+  const k = 2 ** (z - pick.zoom);
+  pick.cx = wx * k - ax + el.clientWidth / 2;
+  pick.cy = wy * k - ay + el.clientHeight / 2;
+  pick.zoom = z;
+  pickDraw();
+}
+(function pickEvents() {
+  const el = $("#pickMap");
+  el.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".map-ctl, .map-attr")) return;
+    pick.down = { x: e.clientX, y: e.clientY, cx: pick.cx, cy: pick.cy, moved: false };
+    el.setPointerCapture(e.pointerId);
+  });
+  el.addEventListener("pointermove", (e) => {
+    const d = pick.down;
+    if (!d) return;
+    if (!d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) { d.moved = true; el.classList.add("dragging"); }
+    if (d.moved) {
+      pick.cx = d.cx - (e.clientX - d.x);
+      pick.cy = d.cy - (e.clientY - d.y);
+      pickDraw();
+    }
+  });
+  el.addEventListener("pointerup", (e) => {
+    const d = pick.down;
+    pick.down = null;
+    el.classList.remove("dragging");
+    if (!d || d.moved) return;
+    // A click without dragging picks the point
+    const r = el.getBoundingClientRect();
+    const v = unproject(pick.cx - el.clientWidth / 2 + (e.clientX - r.left), pick.cy - el.clientHeight / 2 + (e.clientY - r.top), pick.zoom);
+    $("#pinLat").value = v.lat.toFixed(6);
+    $("#pinLon").value = v.lon.toFixed(6);
+    $("#pinErr").textContent = "";
+    pickDraw();
+  });
+  el.addEventListener("pointercancel", () => { pick.down = null; el.classList.remove("dragging"); });
+  el.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const r = el.getBoundingClientRect();
+    pickZoom(pick.zoom + (e.deltaY < 0 ? 1 : -1), e.clientX - r.left, e.clientY - r.top);
+  }, { passive: false });
+  $("#pickLayer").addEventListener("error", (e) => { if (e.target.tagName === "IMG") e.target.remove(); }, true);
+  $("#pickIn").onclick = () => pickZoom(pick.zoom + 1);
+  $("#pickOut").onclick = () => pickZoom(pick.zoom - 1);
+  // Typed coordinates move the marker
+  for (const id of ["#pinLat", "#pinLon"]) $(id).addEventListener("input", pickDraw);
+})();
 const pinURL = () => (pinTarget.kind === "node" ? `/api/admin/pins/${pinTarget.id}` : `/api/admin/observer-pins/${pinTarget.id}`);
 function obsPinLine(o) {
   const p = o.pin;
