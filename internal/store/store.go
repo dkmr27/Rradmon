@@ -160,13 +160,16 @@ func (s *Store) ObserverStatus(extID, source string, t time.Time, st ObserverSta
 	if st.Lat == nil || st.Lon == nil || !ValidPos(*st.Lat, *st.Lon) {
 		st.Lat, st.Lon = nil, nil // 0,0 or out of range: no position
 	}
-	// Create it if new, without touching last_seen of a known observer: a
-	// retained offline status from yesterday must not make it look seen now.
-	if _, err := s.DB.Exec(`INSERT INTO observers (ext_id, name, source, first_seen, last_seen)
-		VALUES (?,?,?,?,?) ON CONFLICT(ext_id) DO NOTHING`, extID, extID, source, ms(t), ms(t)); err != nil {
-		return err
-	}
+	// An online status creates the observer if new. An offline one only
+	// updates a known observer: the broker keeps the last will of every
+	// observer that ever connected, and a server that never saw one should
+	// not list it. Neither touches last_seen of a known observer when
+	// offline: a retained status from yesterday must not make it look seen now.
 	if st.Online {
+		if _, err := s.DB.Exec(`INSERT INTO observers (ext_id, name, source, first_seen, last_seen)
+			VALUES (?,?,?,?,?) ON CONFLICT(ext_id) DO NOTHING`, extID, extID, source, ms(t), ms(t)); err != nil {
+			return err
+		}
 		if err := s.TouchObserver(extID, t); err != nil {
 			return err
 		}

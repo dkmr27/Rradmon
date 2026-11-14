@@ -1,8 +1,12 @@
 package mqtt
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -61,7 +65,10 @@ func NewSubscriber(cfg BrokerConfig, h Handler, opt SubscribeOptions, log *slog.
 		log = slog.Default()
 	}
 	if cfg.ClientID == "" {
-		cfg.ClientID = "rradmon-server"
+		// Unique per process: a broker drops a connection when another
+		// connects with the same client ID, so two servers on one broker
+		// would keep knocking each other off.
+		cfg.ClientID = uniqueClientID("rradmon-server")
 	}
 	s := &Subscriber{prefix: cfg.prefix(), h: h, log: log,
 		buckets: map[string]*bucket{}, lastSeq: map[string]uint64{}, stats: map[string]*SubStats{}}
@@ -227,3 +234,24 @@ var errNetwork = errorString("radio settings do not match the topic's network")
 type errorString string
 
 func (e errorString) Error() string { return string(e) }
+
+// uniqueClientID is prefix-host-random, e.g. rradmon-server-pi3-1a2b3c.
+func uniqueClientID(prefix string) string {
+	host, _ := os.Hostname()
+	var b strings.Builder
+	for _, r := range strings.ToLower(host) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			b.WriteRune(r)
+		}
+		if b.Len() >= 20 {
+			break
+		}
+	}
+	id := prefix
+	if b.Len() > 0 {
+		id += "-" + b.String()
+	}
+	var rnd [3]byte
+	rand.Read(rnd[:])
+	return id + "-" + hex.EncodeToString(rnd[:])
+}
