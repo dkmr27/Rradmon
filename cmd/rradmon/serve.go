@@ -60,7 +60,7 @@ func startHTTP(addr string, st *store.Store, log *slog.Logger) (*web.Server, fun
 func runServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	dbPath := fs.String("db", "rradmon.db", "database file")
-	addr := fs.String("http", "127.0.0.1:8080", "web UI address")
+	addr := fs.String("http", defaultHTTP(), "web UI address ($RRADMON_HTTP sets the default)")
 	localObs := fs.String("local", "", "treat this MQTT observer id as the local observer")
 	fs.Parse(args)
 	if _, err := os.Stat(*dbPath); err != nil {
@@ -102,4 +102,14 @@ func setLocalObserver(st *store.Store, fs *flag.FlagSet, id string) error {
 		return fmt.Errorf("-local: invalid observer id %q", id)
 	}
 	return st.SetSetting("observer.local", id)
+}
+
+// defaultHTTP is the web UI address when -http is not given: this computer
+// only, unless $RRADMON_HTTP says otherwise (the Docker image sets
+// 0.0.0.0:8080, since the host decides what reaches the container).
+func defaultHTTP() string {
+	if a := os.Getenv("RRADMON_HTTP"); a != "" {
+		return a
+	}
+	return "127.0.0.1:8080"
 }

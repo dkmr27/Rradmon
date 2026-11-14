@@ -1,0 +1,14 @@
+# Never send secrets, databases or captures into a build
+.git
+.env
+secret/
+captures/
+dist/
+*.db
+*.db-wal
+*.db-shm
+rradmon
+rradmon.exe
+rradmon-*.exe
+Dockerfile
+compose.yaml

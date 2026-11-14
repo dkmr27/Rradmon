@@ -38,6 +38,7 @@ so Rradmon shows what is visible on air and makes the best of it.
   nothing, use `-promisc=false`: you then see whole packets only, without
   split-frame detail.
 - Windows, macOS or Linux, including a Raspberry Pi. Nothing else to install.
+  A Docker image is also available for servers (see Docker).
 - Optional: an MQTT broker (such as Mosquitto) if you want more than one
   receiver.
 
@@ -165,6 +166,66 @@ Settings (Settings tab, admin only):
 | Dedupe window, announces | 4 hours (relays can hold announces for hours) |
 | Store payloads | on (announces are always kept) |
 | Local observer | none |
+
+## Docker
+
+A Docker image suits a server that reads MQTT observers, on a home server or
+a VPS. It is built from the repository and runs on x86-64, ARM64 and 32-bit
+ARM (Raspberry Pi):
+
+```
+docker build -t rradmon .
+```
+
+The image is small (only the program and CA certificates), runs as a
+non-root user, and keeps its database in the `/data` volume.
+
+With Docker Compose, using the included [compose.yaml](compose.yaml):
+
+1. Put the broker password in `secret/mqtt_password` and let the container
+   read it: `sudo chown 65532 secret/mqtt_password` (65532 is the
+   container's user).
+2. Create a `.env` file next to `compose.yaml` with the broker address and
+   user:
+   ```
+   RRADMON_MQTT_URL=tcp://192.168.1.10:1883
+   RRADMON_MQTT_USER=rradmon
+   ```
+3. Start it and set the admin password:
+   ```
+   docker compose up -d
+   docker compose exec rradmon /rradmon admin set-password
+   ```
+
+The web UI is then at http://localhost:8080. To open it to your network, add
+`RRADMON_PORT=8080` to `.env` (see Security first). `docker compose logs -f`
+shows the log.
+
+Without Compose:
+
+```
+docker run -d --name rradmon --restart unless-stopped -p 127.0.0.1:8080:8080 \
+  -v rradmon-data:/data -v "$PWD/secret/mqtt_password:/run/secrets/mqtt_password:ro" \
+  rradmon run -mqtt tcp://192.168.1.10:1883 -mqtt-user rradmon -mqtt-pass-file /run/secrets/mqtt_password -quiet
+```
+
+An RNode on the Docker host works too: pass the device and its group, and
+add `-port`:
+
+```
+docker run ... --device /dev/ttyUSB0 --group-add "$(stat -c %g /dev/ttyUSB0)" \
+  rradmon run -port /dev/ttyUSB0 ...
+```
+
+Notes:
+
+- Inside the container Rradmon listens on all interfaces (`RRADMON_HTTP`
+  is set to `0.0.0.0:8080`); the `-p` mapping on the host decides who can
+  reach it. `-p 127.0.0.1:8080:8080` keeps it to the host.
+- The container has no time zone data, so its log is in UTC. The web UI
+  shows times in your browser's time zone.
+- To build for other platforms from one machine:
+  `docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6 -t rradmon .`
 
 ## Security
 

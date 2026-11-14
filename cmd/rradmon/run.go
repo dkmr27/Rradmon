@@ -37,7 +37,7 @@ func runRun(args []string) error {
 	promisc := fs.Bool("promisc", true, "raw frames (promiscuous); false = whole packets")
 	quiet := fs.Bool("quiet", false, "do not print each packet")
 	dur := fs.Duration("for", 0, "stop after this long (0 = until Ctrl+C)")
-	httpAddr := fs.String("http", "127.0.0.1:8080", "web UI address (empty to disable)")
+	httpAddr := fs.String("http", defaultHTTP(), "web UI address, empty to disable ($RRADMON_HTTP sets the default)")
 	localObs := fs.String("local", "", "treat this MQTT observer id as the local observer (an attached RNode always is)")
 	lat := fs.Float64("lat", 0, "position of the local RNode (optional, shown on the map)")
 	lon := fs.Float64("lon", 0, "position of the local RNode (optional)")
