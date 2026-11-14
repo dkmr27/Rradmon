@@ -63,6 +63,7 @@ func runRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	st.OnForget = in.Forget // a forgotten observer that is still sending comes back as new
 	ws, shutdown, err := startHTTP(*httpAddr, st, log)
 	if err != nil {
 		return err
@@ -154,7 +155,8 @@ func runRun(args []string) error {
 		if err != nil && ctx.Err() == nil {
 			log.Error("purge failed", "err", err)
 		} else if r != (store.PurgeResult{}) {
-			log.Info("purged old data", "receptions", r.Receptions, "packets", r.Packets, "announces", r.Announces)
+			log.Info("purged old data", "receptions", r.Receptions, "packets", r.Packets, "announces", r.Announces,
+				"observers", r.Observers)
 		}
 	}
 	doPurge()

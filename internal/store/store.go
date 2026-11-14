@@ -18,6 +18,9 @@ import (
 // serialised on one connection.
 type Store struct {
 	DB *sql.DB
+	// OnForget, if set, is called with an observer's id after it is
+	// forgotten, so a running ingester can drop what it holds for it.
+	OnForget func(extID string)
 }
 
 // Open opens or creates the database at path and brings the schema up to date.
@@ -202,6 +205,7 @@ var defaultSettings = map[string]string{
 	"retain.announces_days":  "60",
 	"retain.channel_days":    "30",
 	"retain.node_stats_days": "30",
+	"retain.observers_days":  "30",
 }
 
 // Setting returns a setting's value or its default.
@@ -266,7 +270,7 @@ func (s *Store) AddChannelStats(observerID int64, c ChannelStats) error {
 
 // PurgeResult counts deleted rows.
 type PurgeResult struct {
-	Receptions, Packets, Announces, Channel, FrameErrors, NodeStats, Destinations int64
+	Receptions, Packets, Announces, Channel, FrameErrors, NodeStats, Destinations, Observers int64
 }
 
 // Purge deletes data older than the retention settings, in batches so the
@@ -317,6 +321,29 @@ func (s *Store) Purge(ctx context.Context, now time.Time) (PurgeResult, error) {
 		if *st.n, err = batch(st.q, st.a...); err != nil {
 			return r, err
 		}
+	}
+	// Observers not heard for a while with no receptions left: forget them.
+	// One heard again comes back as new.
+	rows, err := s.DB.QueryContext(ctx, `SELECT id FROM observers o WHERE last_seen < ?
+		AND NOT EXISTS (SELECT 1 FROM receptions r WHERE r.observer_id = o.id)`, cut("retain.observers_days"))
+	if err != nil {
+		return r, err
+	}
+	var stale []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return r, err
+		}
+		stale = append(stale, id)
+	}
+	rows.Close()
+	for _, id := range stale {
+		if _, err := s.ForgetObserver(id); err != nil && !errors.Is(err, ErrNotFound) {
+			return r, err
+		}
+		r.Observers++
 	}
 	return r, nil
 }

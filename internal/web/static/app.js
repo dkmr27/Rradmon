@@ -966,6 +966,8 @@ async function loadObserverPage(id) {
     </div>`;
   const pinBtn = $("#obsPinEdit");
   if (pinBtn) pinBtn.onclick = () => showPinDialog({ kind: "observer", id: o.id }, o.pin, o.lat != null ? { lat: o.lat, lon: o.lon } : null);
+  const forgetBtn = $("#obsForget");
+  if (forgetBtn) forgetBtn.onclick = () => forgetObserver(o);
   loadObserverNodes(o);
   const pts = await api(`/api/channel/${o.id}?hours=${obsHours}`);
   if (String(currentObserver) !== String(id)) return;
@@ -1372,12 +1374,27 @@ function pickZoom(z, ax, ay) {
   for (const id of ["#pinLat", "#pinLon"]) $(id).addEventListener("input", pickDraw);
 })();
 const pinURL = () => (pinTarget.kind === "node" ? `/api/admin/pins/${pinTarget.id}` : `/api/admin/observer-pins/${pinTarget.id}`);
+async function forgetObserver(o) {
+  const live = o.state === "online" ? "\n\nIt is online now, so it will come back as new when it is next heard." : "";
+  if (!confirm(`Forget ${o.ext_id}?\n\nThis deletes the observer and everything it heard: its receptions, ` +
+    `channel stats and position. Packets no other observer heard are deleted too. This cannot be undone.${live}`)) return;
+  try {
+    await apiWrite("DELETE", `/api/admin/observers/${o.id}`);
+  } catch (ex) {
+    alert(`Could not forget ${o.ext_id}: ${ex.message}`);
+    return;
+  }
+  observerList = [];
+  geo.data = null;
+  location.hash = "observers";
+}
 function obsPinLine(o) {
   const p = o.pin;
   const pos = p
     ? `Position set by hand: ${num(p.lat, 5)}, ${num(p.lon, 5)}${p.height != null ? ` · ${num(p.height, 0)} m` : ""}${p.note ? ` · ${esc(p.note)}` : ""}`
     : o.lat != null ? `Position reported by the observer: ${num(o.lat, 5)}, ${num(o.lon, 5)}` : "";
-  const btn = admin.on ? `<button class="btn" id="obsPinEdit">${p ? "Edit position" : "Set position by hand"}</button>` : "";
+  const btn = admin.on ? `<button class="btn" id="obsPinEdit">${p ? "Edit position" : "Set position by hand"}</button>
+    <button class="btn danger" id="obsForget" title="Delete this observer and everything it heard">Forget observer</button>` : "";
   return pos || btn ? `<div class="small pin-line">${pos ? `<span>${pos}</span>` : ""}${btn}</div>` : "";
 }
 async function pinDone(fn) {

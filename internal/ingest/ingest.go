@@ -75,6 +75,14 @@ func New(st *store.Store, radio Radio, log *slog.Logger) (*Ingestor, error) {
 	return &Ingestor{st: st, radio: radio, network: id, log: log, observers: map[string]*observer{}}, nil
 }
 
+// Forget drops what the ingester holds for an observer (its database id and
+// any half-reassembled frames), after the observer was deleted.
+func (in *Ingestor) Forget(ext string) {
+	in.mu.Lock()
+	delete(in.observers, ext)
+	in.mu.Unlock()
+}
+
 // touchEvery limits how often an observer's last_seen is written.
 const touchEvery = 30 * time.Second
 

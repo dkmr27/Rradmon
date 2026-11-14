@@ -91,6 +91,19 @@ func (s *Server) adminClearObserverPin(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, map[string]bool{"ok": err == nil}, err)
 }
 
+func (s *Server) adminForgetObserver(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	ext, err := s.st.ForgetObserver(id)
+	if err == nil {
+		s.log.Info("observer forgotten", "observer", ext)
+	}
+	s.writeJSON(w, map[string]bool{"ok": err == nil}, err)
+}
+
 func (s *Server) adminStripPayloads(w http.ResponseWriter, r *http.Request) {
 	n, err := s.st.StripPayloads()
 	if err == nil {

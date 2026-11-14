@@ -60,6 +60,8 @@ var settingInfo = []SettingInfo{
 		Help: "Noise floor and utilisation reports."},
 	{Key: "retain.node_stats_days", Label: "Keep hourly node stats (days)", Kind: "days",
 		Help: "Hourly RSSI/SNR summaries per node and observer."},
+	{Key: "retain.observers_days", Label: "Keep silent observers (days)", Kind: "days",
+		Help: "Observers not heard for this long, once none of their receptions are left, are removed. One heard again comes back."},
 	{Key: "ingest.window_other", Label: "Dedupe window", Kind: "duration",
 		Help: "Copies of the same packet within this time are one packet (e.g. 10m)."},
 	{Key: "ingest.window_announce", Label: "Dedupe window, announces", Kind: "duration",
@@ -165,6 +167,61 @@ func (s *Store) SetObserverPin(id int64, p Pin) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ForgetObserver deletes an observer and everything it heard: its
+// receptions, channel stats, frame errors and hourly node stats. Packets
+// no other observer heard go too, unless they are announces (announce
+// history outlives receptions anyway). It returns the observer's ext id.
+// An observer that is still sending comes back as new.
+func (s *Store) ForgetObserver(id int64) (string, error) {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	var ext string
+	if err := tx.QueryRow(`SELECT ext_id FROM observers WHERE id = ?`, id).Scan(&ext); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	for _, q := range []string{
+		`CREATE TEMP TABLE IF NOT EXISTS forget_pk (id INTEGER PRIMARY KEY)`,
+		`DELETE FROM forget_pk`,
+		`INSERT OR IGNORE INTO forget_pk SELECT packet_id FROM receptions WHERE observer_id = ?1`,
+		`DELETE FROM receptions WHERE observer_id = ?1`,
+		`DELETE FROM channel_stats WHERE observer_id = ?1`,
+		`DELETE FROM frame_errors WHERE observer_id = ?1`,
+		`DELETE FROM node_stats_hourly WHERE observer_id = ?1`,
+		`DELETE FROM packets WHERE id IN (SELECT id FROM forget_pk)
+			AND NOT EXISTS (SELECT 1 FROM receptions r WHERE r.packet_id = packets.id)
+			AND NOT EXISTS (SELECT 1 FROM announces a WHERE a.packet_id = packets.id)`,
+		// rx_count counts whole receptions
+		`UPDATE packets SET rx_count = (SELECT COUNT(*) FROM receptions r WHERE r.packet_id = packets.id AND r.partial = 0)
+			WHERE id IN (SELECT id FROM forget_pk)`,
+		`DELETE FROM forget_pk`,
+		`DELETE FROM observers WHERE id = ?1`,
+	} {
+		var args []any
+		if strings.Contains(q, "?1") {
+			args = []any{id}
+		}
+		if _, err := tx.Exec(q, args...); err != nil {
+			return "", err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM settings WHERE key = 'observer.local' AND value = ?`, ext); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	if s.OnForget != nil {
+		s.OnForget(ext)
+	}
+	return ext, nil
 }
 
 // ClearObserverPin removes an observer's hand-set position.

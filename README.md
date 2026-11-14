@@ -160,6 +160,7 @@ Settings (Settings tab, admin only):
 | Keep announces | 60 days |
 | Keep channel stats | 30 days |
 | Keep hourly node stats | 30 days |
+| Keep silent observers (removed once not heard and no receptions left) | 30 days |
 | Dedupe window | 10 minutes |
 | Dedupe window, announces | 4 hours (relays can hold announces for hours) |
 | Store payloads | on (announces are always kept) |
