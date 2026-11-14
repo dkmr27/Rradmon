@@ -46,3 +46,7 @@ Reticulum LoRa radio monitor. Single Go binary, web UI embedded, SQLite store, M
 - Test RNode: COM32, dedicated to Rradmon testing. Observer hardware: Heltec V3 (SX1262).
 - Repo is private (github.com/dkmr27/Rradmon); keep it that way until the user says otherwise.
 - Network: AU915, 925.875 MHz, 250 kHz, SF9, CR 4/5, sync 0x12. Store radio config with every observation.
+
+## Release builds
+
+`go run ./tools/release` cross-compiles every platform (pure Go, CGO_ENABLED=0) into `dist/` as zip/tar.gz plus a SHA256SUMS file. The version comes from `git describe --tags`, or pass `-version`. `-targets linux/arm64,windows/amd64` builds a subset. Archives are reproducible for a given commit.
