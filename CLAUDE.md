@@ -44,7 +44,7 @@ Reticulum LoRa radio monitor. Single Go binary, web UI embedded, SQLite store, M
 - Reassembly happens per observer, before dedupe (spec §1, §4).
 - Rradmon never transmits on the radio.
 - Test RNode: COM32, dedicated to Rradmon testing. Observer hardware: Heltec V3 (SX1262).
-- Repo is private (github.com/dkmr27/Rradmon); keep it that way until the user says otherwise.
+- Repo is public (github.com/dkmr27/Rradmon, since 2026-11-15): everything committed is published. Secrets stay in git-ignored secret/; no bench-specific addresses, credentials or real positions in tracked files.
 - Network: AU915, 925.875 MHz, 250 kHz, SF9, CR 4/5, sync 0x12. Store radio config with every observation.
 
 ## Release builds

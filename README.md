@@ -12,7 +12,7 @@ receiver heard which node and how well.
 
 Rradmon only listens. It never transmits on the radio.
 
-Status: early (0.1.0). It runs well on the author's bench; expect rough edges.
+Status: early (0.2.0). It runs well on the author's bench; expect rough edges.
 
 ## What you see
 
@@ -44,7 +44,8 @@ so Rradmon shows what is visible on air and makes the best of it.
 
 ## Install
 
-Download the archive for your platform from the releases, unpack it, and run
+Download the archive for your platform from the
+[releases](https://github.com/dkmr27/Rradmon/releases), unpack it, and run
 `rradmon` from a terminal. Each archive holds one program file.
 
 | Platform | Archive |
