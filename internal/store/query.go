@@ -339,6 +339,8 @@ type NodeDetail struct {
 	AnnounceRate []HourCount `json:"announce_rate"`
 	// Last 24 h: how each observer hears this node
 	PerObserver []ObserverSignal `json:"per_observer"`
+	// Position set by hand (wins over announced positions on the map)
+	Pin *Pin `json:"pin,omitempty"`
 }
 
 // HourCount is a count for one clock hour.
@@ -507,6 +509,10 @@ func (s *Store) Node(identHex string, now time.Time) (*NodeDetail, error) {
 	err = s.DB.QueryRow(`SELECT COUNT(*) FROM receptions r JOIN packets p ON p.id = r.packet_id
 		WHERE r.tx_identity = ? AND r.header2 = 1 AND p.pkt_type = 1`, ident).Scan(&d.Relayed)
 	if err != nil {
+		return nil, err
+	}
+
+	if d.Pin, err = s.pinFor(ident); err != nil {
 		return nil, err
 	}
 

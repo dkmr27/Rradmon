@@ -13,7 +13,7 @@ type MapNode struct {
 	Lat       float64   `json:"lat"`
 	Lon       float64   `json:"lon"`
 	Height    *float64  `json:"height,omitempty"`
-	PosSource string    `json:"pos_source"` // "discovery" (later: "manual")
+	PosSource string    `json:"pos_source"` // "discovery" or "manual" (pinned by hand)
 	PosT      time.Time `json:"pos_t"`      // when that position was announced
 	Info      string    `json:"info,omitempty"`
 }
@@ -67,6 +67,28 @@ func (s *Store) Map(now time.Time) (MapData, error) {
 		if _, seen := placed[hx(ident)]; !seen { // newest first
 			placed[hx(ident)] = p
 		}
+	}
+	rows.Close()
+
+	// Pins set by hand win over announced positions
+	rows, err = s.DB.Query(`SELECT identity_hash, lat, lon, height, COALESCE(note, ''), set_t FROM node_pins`)
+	if err != nil {
+		return md, err
+	}
+	for rows.Next() {
+		var ident []byte
+		var p pos
+		if err := rows.Scan(&ident, &p.lat, &p.lon, &p.height, &p.info, &p.t); err != nil {
+			rows.Close()
+			return md, err
+		}
+		p.source = "manual"
+		if p.info != "" {
+			p.info = "Pinned: " + p.info
+		} else {
+			p.info = "Position pinned by hand"
+		}
+		placed[hx(ident)] = p
 	}
 	rows.Close()
 

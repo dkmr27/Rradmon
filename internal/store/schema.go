@@ -198,4 +198,16 @@ ALTER TABLE destinations ADD COLUMN info_t INTEGER;  -- announce time the info c
 	`
 UPDATE destinations SET info = NULL, info_t = NULL;
 `,
+	// 7: positions set by hand by the admin, per node (identity). A pin wins
+	// over an announced position.
+	`
+CREATE TABLE node_pins (
+	identity_hash BLOB PRIMARY KEY,
+	lat           REAL NOT NULL,
+	lon           REAL NOT NULL,
+	height        REAL,
+	note          TEXT,
+	set_t         INTEGER NOT NULL
+);
+`,
 }

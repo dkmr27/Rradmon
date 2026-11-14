@@ -16,7 +16,9 @@
     <button role="tab" data-tab="observers">Observers</button>
     <button role="tab" data-tab="map">Map</button>
     <button role="tab" data-tab="local" hidden title="The local observer: an RNode attached to this server, or the MQTT observer chosen with -local">Local</button>
+    <button role="tab" data-tab="settings" hidden>Settings</button>
   </nav>
+  <button class="btn admin-btn" id="adminBtn" title="Log in to change settings and pin node positions">Admin</button>
   <button class="theme" id="themeBtn" title="Toggle light/dark">◐</button>
 </header>
 
@@ -155,7 +157,60 @@
     </div>
   </section>
 
+  <section id="tab-settings" class="tab" hidden>
+    <form id="settingsForm" class="settings">
+      <div id="settingsList"></div>
+      <div class="form-row">
+        <button type="submit" class="btn primary">Save changes</button>
+        <span class="small" id="settingsMsg" role="status"></span>
+      </div>
+    </form>
+    <div class="card maint">
+      <h3>Stored payloads</h3>
+      <p class="muted small">Remove the stored payload bytes of every packet except announces (announces are kept: they
+        carry names, keys and positions). Packet records, signal figures and hashes stay. This cannot be undone. To stop
+        storing new payloads, turn off "Store payloads" above.</p>
+      <button id="stripBtn" class="btn danger">Strip stored payloads</button>
+      <span class="small" id="stripMsg" role="status"></span>
+    </div>
+  </section>
+
 </main>
+
+<dialog id="loginDlg" class="dlg">
+  <form method="dialog" id="loginForm">
+    <h3>Admin login</h3>
+    <div id="loginBody">
+      <label for="loginPw">Password</label>
+      <input id="loginPw" type="password" autocomplete="current-password" required>
+    </div>
+    <p class="small err" id="loginErr" role="alert"></p>
+    <div class="form-row end">
+      <button type="button" class="btn" id="loginCancel">Cancel</button>
+      <button type="submit" class="btn primary" id="loginOk">Log in</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="pinDlg" class="dlg">
+  <form method="dialog" id="pinForm">
+    <h3>Position set by hand</h3>
+    <p class="muted small">For nodes that do not announce a position. A pinned position replaces the announced one on the map.</p>
+    <div class="grid2">
+      <label>Latitude <input id="pinLat" type="number" step="any" min="-90" max="90" required></label>
+      <label>Longitude <input id="pinLon" type="number" step="any" min="-180" max="180" required></label>
+      <label>Height, m (optional) <input id="pinHeight" type="number" step="any" min="-500" max="10000"></label>
+      <label>Note (optional) <input id="pinNote" type="text" maxlength="200"></label>
+    </div>
+    <p class="small err" id="pinErr" role="alert"></p>
+    <div class="form-row end">
+      <button type="button" class="btn danger" id="pinClear">Remove pin</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn" id="pinCancel">Cancel</button>
+      <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
 
 <div class="tip" id="tip" hidden></div>
 <script src="app.js"></script>

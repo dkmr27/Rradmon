@@ -41,6 +41,8 @@ type Server struct {
 
 	mu   sync.Mutex
 	subs map[chan time.Time]struct{}
+
+	auth *auth
 }
 
 // New builds the handler.
@@ -48,7 +50,7 @@ func New(st *store.Store, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	s := &Server{st: st, log: log, mux: http.NewServeMux(), subs: map[chan time.Time]struct{}{}}
+	s := &Server{st: st, log: log, mux: http.NewServeMux(), subs: map[chan time.Time]struct{}{}, auth: newAuth()}
 	sub, _ := fs.Sub(static, "static")
 	files := http.FileServer(http.FS(sub))
 	s.mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
@@ -66,6 +68,15 @@ func New(st *store.Store, log *slog.Logger) *Server {
 	s.mux.HandleFunc("GET /api/observers", s.observers)
 	s.mux.HandleFunc("GET /api/map", s.mapData)
 	s.mux.HandleFunc("GET /api/observers/{id}/nodes", s.observerNodes)
+	// Admin
+	s.mux.HandleFunc("GET /api/session", s.sessionInfo)
+	s.mux.HandleFunc("POST /api/login", s.login)
+	s.mux.HandleFunc("POST /api/logout", s.logout)
+	s.mux.HandleFunc("GET /api/admin/settings", s.admin(s.adminSettings))
+	s.mux.HandleFunc("PUT /api/admin/settings", s.admin(s.adminSaveSettings))
+	s.mux.HandleFunc("PUT /api/admin/pins/{id}", s.admin(s.adminSetPin))
+	s.mux.HandleFunc("DELETE /api/admin/pins/{id}", s.admin(s.adminClearPin))
+	s.mux.HandleFunc("POST /api/admin/strip-payloads", s.admin(s.adminStripPayloads))
 	s.mux.HandleFunc("GET /api/packets/{id}/observations", s.packetObservations)
 	s.mux.HandleFunc("GET /api/orphans/{id}/observations", s.orphanObservations)
 	return s

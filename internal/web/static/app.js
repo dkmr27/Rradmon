@@ -48,6 +48,7 @@ function showTab(name) {
   // Tabs that are not shown (no local observer; only one observer) fall back
   if (name === "local" && !localObserver) name = "live";
   if (name === "channel") name = localObserver ? "local" : "live"; // old saved tab
+  if (name === "settings" && !admin.on) name = "live";
   currentTab = name;
   const nav = name === "node" ? "nodes" : name === "observer" ? "observers" : name;
   const section = name === "local" ? "observer" : name;
@@ -58,6 +59,7 @@ function showTab(name) {
   if (name === "nodes") loadNodes();
   if (name === "observers") loadObservers();
   if (name === "map") loadMap();
+  if (name === "settings") loadSettings();
   if (name === "local") { currentObserver = localObserver.id; loadObserverPage(currentObserver); }
   if (name !== "node" && name !== "observer") store("rradmon.tab", name);
 }
@@ -514,6 +516,7 @@ function renderNodePage(d) {
       <div>${apps || '<span class="muted">seen only as a relay</span>'}</div>
       ${placed ? `<div class="small">${num(placed.lat, 5)}, ${num(placed.lon, 5)}${placed.height != null ? ` · ${num(placed.height, 0)} m` : ""}
         <button class="link" data-map="1" data-lat="${placed.lat}" data-lon="${placed.lon}">show on map</button></div>` : ""}
+      ${pinLine(d)}
     </header>
     <div class="heard-by">
       <label for="heardBy">As heard by</label>
@@ -564,6 +567,8 @@ function renderNodePage(d) {
   const choose = (v) => { heardBy = v; store("rradmon.heardBy", v); renderNodePage(lastNodeData); };
   $("#heardBy").onchange = (e) => choose(e.target.value);
   $$("table.per-obs tr[data-obs]", page).forEach((tr) => (tr.onclick = () => choose(tr.dataset.obs)));
+  const pinBtn = $("#pinEdit", page);
+  if (pinBtn) pinBtn.onclick = () => openPinDialog(d);
   $$("[data-map]", page).forEach((b) => (b.onclick = async () => {
     showTab("map");
     await loadMap();
@@ -1024,6 +1029,190 @@ function drawChart({ el, opts }) {
   svgEl.onmouseleave = () => { tip.hidden = true; xh.setAttribute("visibility", "hidden"); };
 }
 
+// ---------- admin ----------
+// Viewing is open; changes need the admin login. Every change sends the
+// session's CSRF token in a header (the session cookie itself is HttpOnly).
+const admin = { on: false, csrf: "", passwordSet: false };
+async function apiWrite(method, path, body) {
+  const r = await fetch(path, {
+    method,
+    headers: { "Content-Type": "application/json", Accept: "application/json", "X-Rradmon-CSRF": admin.csrf },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (r.status === 401) { setAdmin(false); throw new Error("Your admin session has ended; log in again."); }
+  if (!r.ok) throw new Error((await r.text()).trim() || `${r.status}`);
+  return r.json();
+}
+async function loadSession() {
+  const s = await api("/api/session");
+  admin.passwordSet = s.password_set;
+  setAdmin(s.admin, s.csrf);
+}
+function setAdmin(on, csrf = "") {
+  const was = admin.on;
+  admin.on = on;
+  admin.csrf = on ? csrf : "";
+  const btn = $("#adminBtn");
+  btn.textContent = on ? "Log out" : "Admin";
+  btn.title = on ? "Logged in as admin. Click to log out." : "Log in to change settings and pin node positions";
+  btn.setAttribute("aria-pressed", on);
+  $('.tabs [data-tab="settings"]').hidden = !on;
+  if (!on && currentTab === "settings") showTab("live");
+  if (was !== on && currentTab === "node" && lastNodeData) renderNodePage(lastNodeData);
+}
+$("#adminBtn").onclick = async () => {
+  if (admin.on) {
+    await fetch("/api/logout", { method: "POST" }).catch(() => {});
+    setAdmin(false);
+    return;
+  }
+  await loadSession().catch(() => {});
+  if (admin.on) return;
+  $("#loginErr").textContent = "";
+  $("#loginPw").value = "";
+  $("#loginBody").hidden = !admin.passwordSet;
+  $("#loginOk").hidden = !admin.passwordSet;
+  if (!admin.passwordSet) {
+    $("#loginErr").innerHTML = 'No admin password is set yet. On the server, run <span class="mono">rradmon admin -db &lt;database&gt; set-password</span>, then log in here. No restart is needed.';
+  }
+  $("#loginDlg").showModal();
+  if (admin.passwordSet) $("#loginPw").focus();
+};
+$("#loginCancel").onclick = () => $("#loginDlg").close();
+$("#loginForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const err = $("#loginErr");
+  err.textContent = "";
+  try {
+    const r = await fetch("/api/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: $("#loginPw").value }),
+    });
+    if (!r.ok) throw new Error(r.status === 401 ? "Wrong password." : (await r.text()).trim());
+    const s = await r.json();
+    $("#loginPw").value = "";
+    $("#loginDlg").close();
+    setAdmin(true, s.csrf);
+  } catch (ex) {
+    err.textContent = ex.message;
+    $("#loginPw").select();
+  }
+};
+
+// Settings page
+let settingsData = [];
+async function loadSettings() {
+  try { settingsData = await apiWrite("GET", "/api/admin/settings"); } catch (ex) { $("#settingsMsg").textContent = ex.message; return; }
+  renderSettings();
+}
+function settingInput(s) {
+  const id = `set-${esc(s.key)}`, key = esc(s.key);
+  if (s.kind === "bool") return `<label><input type="checkbox" id="${id}" data-key="${key}"${s.value === "1" ? " checked" : ""}> on</label>`;
+  if (s.kind === "days") return `<span><input type="number" id="${id}" data-key="${key}" min="1" max="3650" step="1" value="${esc(s.value)}" required> days</span>`;
+  if (s.kind === "observer") {
+    const ids = observers.filter((o) => o.source !== "rnode-serial").map((o) => o.ext_id);
+    if (s.value && !ids.includes(s.value)) ids.unshift(s.value);
+    return `<select id="${id}" data-key="${key}"><option value="">None (only an RNode attached here)</option>
+      ${ids.map((x) => `<option value="${esc(x)}"${x === s.value ? " selected" : ""}>${esc(x)}</option>`).join("")}</select>`;
+  }
+  return `<input type="text" id="${id}" data-key="${key}" value="${esc(s.value)}" size="8" title="A duration such as 10m or 4h" required>`;
+}
+function settingValue(el) { return el.type === "checkbox" ? (el.checked ? "1" : "0") : el.value.trim(); }
+function renderSettings() {
+  const shownDefault = (s) => (s.kind === "bool" ? (s.default === "1" ? "on" : "off") : s.default === "" ? "none" : s.default + (s.kind === "days" ? " days" : ""));
+  $("#settingsList").innerHTML = settingsData.map((s) => `<div class="setting">
+      <label class="lbl" for="set-${esc(s.key)}">${esc(s.label)}</label><div>${settingInput(s)}</div>
+      <div class="help">${esc(s.help)} <span class="def">Default: ${esc(shownDefault(s))}.</span></div></div>`).join("");
+}
+function markChanged(e) {
+  const el = e.target.closest("[data-key]");
+  if (!el) return;
+  const s = settingsData.find((x) => x.key === el.dataset.key);
+  el.closest(".setting").classList.toggle("changed", !!s && settingValue(el) !== s.value);
+}
+$("#settingsList").addEventListener("input", markChanged);
+$("#settingsList").addEventListener("change", markChanged);
+$("#settingsForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const msg = $("#settingsMsg");
+  const changes = {};
+  for (const el of $$("[data-key]", $("#settingsList"))) {
+    const s = settingsData.find((x) => x.key === el.dataset.key);
+    if (s && settingValue(el) !== s.value) changes[s.key] = settingValue(el);
+  }
+  const n = Object.keys(changes).length;
+  if (!n) { msg.className = "small muted"; msg.textContent = "Nothing changed."; return; }
+  try {
+    settingsData = await apiWrite("PUT", "/api/admin/settings", changes);
+    renderSettings();
+    msg.className = "small ok";
+    msg.textContent = `Saved ${n} change${n > 1 ? "s" : ""}.`;
+    loadSummary().catch(console.error);
+  } catch (ex) {
+    msg.className = "small err";
+    msg.textContent = ex.message;
+  }
+};
+$("#stripBtn").onclick = async () => {
+  if (!confirm("Remove the stored payload bytes of every packet except announces? This cannot be undone.")) return;
+  const msg = $("#stripMsg");
+  try {
+    const r = await apiWrite("POST", "/api/admin/strip-payloads");
+    msg.className = "small ok";
+    msg.textContent = `Payloads removed from ${r.stripped} packet${r.stripped === 1 ? "" : "s"}.`;
+  } catch (ex) {
+    msg.className = "small err";
+    msg.textContent = ex.message;
+  }
+};
+
+// Pinned position on the node page
+function pinLine(d) {
+  const p = d.pin;
+  const txt = p
+    ? `<span>Pinned by hand: ${num(p.lat, 5)}, ${num(p.lon, 5)}${p.height != null ? ` · ${num(p.height, 0)} m` : ""}${p.note ? ` · ${esc(p.note)}` : ""}</span>
+       <button class="link" data-map="1" data-lat="${p.lat}" data-lon="${p.lon}">show on map</button>`
+    : "";
+  const btn = admin.on ? `<button class="btn" id="pinEdit">${p ? "Edit pinned position" : "Set position by hand"}</button>` : "";
+  return txt || btn ? `<div class="small pin-line">${txt}${btn}</div>` : "";
+}
+let pinNode = null;
+function openPinDialog(d) {
+  pinNode = d.identity;
+  const p = d.pin;
+  const src = p || (d.dests || []).find((x) => x.lat != null) || {};
+  $("#pinLat").value = src.lat ?? "";
+  $("#pinLon").value = src.lon ?? "";
+  $("#pinHeight").value = src.height ?? "";
+  $("#pinNote").value = p ? p.note || "" : "";
+  $("#pinClear").hidden = !p;
+  $("#pinErr").textContent = "";
+  $("#pinDlg").showModal();
+  $("#pinLat").focus();
+}
+$("#pinCancel").onclick = () => $("#pinDlg").close();
+async function pinDone(fn) {
+  try {
+    await fn();
+    $("#pinDlg").close();
+    if (currentNode === pinNode) loadNodePage(pinNode);
+  } catch (ex) {
+    $("#pinErr").textContent = ex.message;
+  }
+}
+$("#pinForm").onsubmit = (e) => {
+  e.preventDefault();
+  const h = $("#pinHeight").value.trim();
+  const body = { lat: Number($("#pinLat").value), lon: Number($("#pinLon").value), note: $("#pinNote").value.trim() };
+  if (h !== "") body.height = Number(h);
+  pinDone(() => apiWrite("PUT", `/api/admin/pins/${pinNode}`, body));
+};
+$("#pinClear").onclick = () => {
+  if (confirm("Remove the pinned position? The node goes back to its announced position, if it has one.")) {
+    pinDone(() => apiWrite("DELETE", `/api/admin/pins/${pinNode}`));
+  }
+};
+
 // ---------- start ----------
 addEventListener("hashchange", () => {
   const m = location.hash.match(/^#node=([0-9a-f]{32})$/);
@@ -1033,6 +1222,7 @@ addEventListener("hashchange", () => {
   else if (currentTab === "node" || currentTab === "observer") showTab(returnTab);
 });
 (async function start() {
+  await loadSession().catch(console.error);
   await loadSummary().catch(console.error);
   await loadFeed().catch(console.error);
   const m = location.hash.match(/^#node=([0-9a-f]{32})$/);

@@ -281,3 +281,39 @@ h3.section { font-size: 13px; color: var(--text-2); font-weight: 600; margin: 18
 /* Full hashes stay on one line and are click-to-copy */
 button.hash { white-space: nowrap; font-size: 12px; }
 .feed td.dest, .feed td.aspect { white-space: nowrap; }
+
+/* ---------- admin ---------- */
+.admin-btn { margin-left: auto; }
+.admin-btn + .theme { margin-left: 8px; }
+.admin-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.danger { color: var(--bad); }
+.btn.danger:hover { border-color: var(--bad); }
+.btn:disabled { opacity: .5; cursor: default; }
+.err { color: var(--bad); min-height: 1em; margin: 8px 0 0; }
+.ok { color: var(--good, var(--text-2)); }
+.form-row { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+.form-row.end { justify-content: flex-end; }
+.form-row .spacer { flex: 1; }
+.dlg { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 10px; padding: 18px 20px; width: min(440px, calc(100vw - 32px)); }
+.dlg::backdrop { background: rgb(0 0 0 / .35); }
+.dlg h3 { margin: 0 0 10px; }
+.dlg label { display: block; font-size: 12px; color: var(--text-2); }
+.dlg input, .settings input, .settings select {
+  font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
+}
+.dlg label input { display: block; width: 100%; box-sizing: border-box; margin-top: 3px; }
+#loginPw { display: block; width: 100%; box-sizing: border-box; margin-top: 3px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 480px) { .grid2 { grid-template-columns: 1fr; } }
+.settings { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 16px 16px; max-width: 760px; }
+.setting { display: grid; grid-template-columns: 220px 1fr; gap: 4px 16px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.setting .lbl { font-weight: 600; }
+.setting .help { grid-column: 2; color: var(--text-2); font-size: 12px; }
+.setting .def { color: var(--text-3); }
+.setting input[type="number"] { width: 90px; }
+.setting.changed .lbl::after { content: " •"; color: var(--accent); }
+@media (max-width: 600px) { .setting { grid-template-columns: 1fr; } .setting .help { grid-column: 1; } }
+.maint { max-width: 760px; margin-top: 16px; }
+.pin-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

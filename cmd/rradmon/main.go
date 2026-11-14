@@ -15,6 +15,7 @@ commands:
   import    store a capture file in the database
   serve     web UI for an existing database (no radio)
   observe   read an RNode (or replay a capture) and publish to MQTT
+  admin     set or clear the admin password (set-password, clear-password)
   capture   read an RNode in promiscuous mode and save raw frames (JSON lines)
   decode    reassemble and parse a capture file
   ports     list serial ports
@@ -42,6 +43,8 @@ func main() {
 		err = runServe(os.Args[2:])
 	case "observe":
 		err = runObserve(os.Args[2:])
+	case "admin":
+		err = runAdmin(os.Args[2:])
 	case "version", "-version", "--version":
 		fmt.Println("rradmon", version)
 	case "help", "-h", "--help":
