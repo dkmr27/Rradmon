@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/dkmr27/Rradmon/internal/decode"
 	"github.com/dkmr27/Rradmon/internal/reassembly"
@@ -11,7 +12,7 @@ import (
 )
 
 func runDecode(args []string) error {
-	if len(args) != 1 {
+	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
 		return errors.New("usage: rradmon decode <capture.jsonl>")
 	}
 	f, err := os.Open(args[0])

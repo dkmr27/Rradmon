@@ -31,7 +31,7 @@ func startHTTP(addr string, st *store.Store, log *slog.Logger) (*web.Server, fun
 	if ip := net.ParseIP(host); host == "localhost" || (ip != nil && ip.IsLoopback()) {
 		ws.LoopbackOnly = true
 	} else {
-		log.Warn("web UI is reachable from the network; it has no login yet (read-only)", "addr", addr)
+		log.Warn("web UI is reachable from the network: anyone who can reach it can view it; set an admin password, and use HTTPS beyond a home network", "addr", addr)
 	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
