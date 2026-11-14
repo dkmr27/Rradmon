@@ -184,3 +184,23 @@ func TestCleanUntrustedText(t *testing.T) {
 		t.Errorf("summary too long: %d runes", len([]rune(info.Summary)))
 	}
 }
+
+func TestDescribeDiscoveryZeroPosition(t *testing.T) {
+	// 0,0 is how an unset position is sent: no position, and none in the summary
+	ad := discoveryAppData(false)
+	zero := bytes.Replace(ad, binF64(-10.5), binF64(0), 1)
+	zero = bytes.Replace(zero, binF64(120.25), binF64(0), 1)
+	info := DescribeAnnounce(NameHash("rnstransport.discovery.interface"), zero)
+	if d := info.Discovery; d == nil || d.Lat != nil || d.Lon != nil || d.Height != nil {
+		t.Fatalf("position not dropped: %+v", info.Discovery)
+	}
+	if strings.Contains(info.Summary, "0.00000") || strings.Contains(info.Summary, " m") {
+		t.Errorf("summary shows a position: %s", info.Summary)
+	}
+}
+
+func binF64(v float64) []byte {
+	var m mp
+	m.f64(v)
+	return m.Bytes()
+}

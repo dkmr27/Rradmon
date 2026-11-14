@@ -224,7 +224,7 @@ func applyAnnounceInfo(tx *sql.Tx, dest []byte, t int64, info reticulum.Announce
 		WHERE hash = ? AND (info_t IS NULL OR info_t <= ?)`, nullStr(info.Summary), t, dest, t); err != nil {
 		return err
 	}
-	if d := info.Discovery; d != nil && d.Lat != nil && d.Lon != nil {
+	if d := info.Discovery; d != nil && d.Lat != nil && d.Lon != nil && ValidPos(*d.Lat, *d.Lon) {
 		_, err := tx.Exec(`UPDATE destinations SET lat = ?, lon = ?, height = ?, pos_source = 'discovery'
 			WHERE hash = ? AND info_t = ?`, *d.Lat, *d.Lon, d.Height, dest, t)
 		return err

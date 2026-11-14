@@ -63,6 +63,9 @@ func ParseDiscovery(appData []byte) (*Discovery, error) {
 	if d.Lat != nil && (*d.Lat < -90 || *d.Lat > 90) || d.Lon != nil && (*d.Lon < -180 || *d.Lon > 180) {
 		d.Lat, d.Lon = nil, nil // not a position
 	}
+	if d.Lat != nil && d.Lon != nil && *d.Lat == 0 && *d.Lon == 0 {
+		d.Lat, d.Lon, d.Height = nil, nil, nil // 0,0 is how "no position set" is sent
+	}
 	if (d.Lat == nil) != (d.Lon == nil) {
 		d.Lat, d.Lon = nil, nil
 	}

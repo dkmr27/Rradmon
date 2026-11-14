@@ -210,4 +210,16 @@ CREATE TABLE node_pins (
 	set_t         INTEGER NOT NULL
 );
 `,
+	// 8: 0,0 is how an unset position is sent, so it is no position at all;
+	// and observer positions set by hand (they win over a reported one)
+	`
+UPDATE destinations SET lat = NULL, lon = NULL, height = NULL, pos_source = NULL WHERE lat = 0 AND lon = 0;
+UPDATE observers SET lat = NULL, lon = NULL WHERE lat = 0 AND lon = 0;
+UPDATE destinations SET info = NULL, info_t = NULL WHERE info LIKE '%0.00000, 0.00000%';
+ALTER TABLE observers ADD COLUMN pin_lat REAL;
+ALTER TABLE observers ADD COLUMN pin_lon REAL;
+ALTER TABLE observers ADD COLUMN pin_height REAL;
+ALTER TABLE observers ADD COLUMN pin_note TEXT;
+ALTER TABLE observers ADD COLUMN pin_t INTEGER;
+`,
 }

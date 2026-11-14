@@ -149,10 +149,14 @@
         <div class="map-attr">Tiles © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors</div>
       </div>
       <aside class="map-side">
+        <h3>Observers</h3>
+        <ul id="mapObsList" class="map-list"></ul>
+        <div id="pathInfo" class="small"></div>
         <h3>Placed nodes</h3>
         <ul id="mapList" class="map-list"></ul>
-        <p class="muted small">Positions come from interface-discovery announces. Turning tiles off keeps the map working
-          without contacting OpenStreetMap (each tile request tells it which area you are viewing).</p>
+        <p class="muted small">Positions come from interface-discovery announces (0, 0 counts as no position), or are set
+          by hand by the admin on a node's or observer's page. Turning tiles off keeps the map working without contacting
+          OpenStreetMap (each tile request tells it which area you are viewing).</p>
       </aside>
     </div>
   </section>
@@ -194,8 +198,8 @@
 
 <dialog id="pinDlg" class="dlg">
   <form method="dialog" id="pinForm">
-    <h3>Position set by hand</h3>
-    <p class="muted small">For nodes that do not announce a position. A pinned position replaces the announced one on the map.</p>
+    <h3 id="pinTitle">Position set by hand</h3>
+    <p class="muted small" id="pinHelp"></p>
     <div class="grid2">
       <label>Latitude <input id="pinLat" type="number" step="any" min="-90" max="90" required></label>
       <label>Longitude <input id="pinLon" type="number" step="any" min="-180" max="180" required></label>

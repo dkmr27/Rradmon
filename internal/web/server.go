@@ -77,6 +77,8 @@ func New(st *store.Store, log *slog.Logger) *Server {
 	s.mux.HandleFunc("PUT /api/admin/pins/{id}", s.admin(s.adminSetPin))
 	s.mux.HandleFunc("DELETE /api/admin/pins/{id}", s.admin(s.adminClearPin))
 	s.mux.HandleFunc("POST /api/admin/strip-payloads", s.admin(s.adminStripPayloads))
+	s.mux.HandleFunc("PUT /api/admin/observer-pins/{id}", s.admin(s.adminSetObserverPin))
+	s.mux.HandleFunc("DELETE /api/admin/observer-pins/{id}", s.admin(s.adminClearObserverPin))
 	s.mux.HandleFunc("GET /api/packets/{id}/observations", s.packetObservations)
 	s.mux.HandleFunc("GET /api/orphans/{id}/observations", s.orphanObservations)
 	return s

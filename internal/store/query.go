@@ -620,13 +620,15 @@ type ObserverView struct {
 	LastSeen  time.Time `json:"last_seen"`
 	// State: "online" (heard recently), "offline" (said so, e.g. its MQTT last
 	// will), or "silent" (claims online but nothing heard for a while).
-	State    string         `json:"state"`
-	StatusT  *time.Time     `json:"status_t,omitempty"`
-	Firmware string         `json:"firmware,omitempty"`
-	Software string         `json:"software,omitempty"`
-	Lat      *float64       `json:"lat,omitempty"`
-	Lon      *float64       `json:"lon,omitempty"`
-	Status   map[string]any `json:"status,omitempty"` // selected fields of its last status message
+	State    string     `json:"state"`
+	StatusT  *time.Time `json:"status_t,omitempty"`
+	Firmware string     `json:"firmware,omitempty"`
+	Software string     `json:"software,omitempty"`
+	// Lat, Lon: its hand-set position (Pin) if any, else the one it reports
+	Lat    *float64       `json:"lat,omitempty"`
+	Lon    *float64       `json:"lon,omitempty"`
+	Pin    *Pin           `json:"pin,omitempty"`
+	Status map[string]any `json:"status,omitempty"` // selected fields of its last status message
 
 	Rx1h        int64    `json:"rx_1h"`
 	Rx24h       int64    `json:"rx_24h"`
@@ -669,6 +671,7 @@ func (s *Store) Observers(now time.Time) ([]ObserverView, error) {
 	rows, err := s.DB.Query(`
 		SELECT o.id, o.ext_id, COALESCE(o.source,''), o.first_seen, o.last_seen, o.online, o.status_t,
 			COALESCE(o.firmware,''), COALESCE(o.software,''), o.lat, o.lon, COALESCE(o.status_json,''),
+			o.pin_lat, o.pin_lon, o.pin_height, COALESCE(o.pin_note,''), o.pin_t,
 			(SELECT COUNT(*) FROM receptions r WHERE r.observer_id = o.id AND r.t_rx >= ?1),
 			(SELECT COUNT(*) FROM receptions r WHERE r.observer_id = o.id AND r.t_rx >= ?2),
 			(SELECT COUNT(DISTINCT packet_id) FROM receptions r WHERE r.observer_id = o.id AND r.t_rx >= ?2),
@@ -695,14 +698,23 @@ func (s *Store) Observers(now time.Time) ([]ObserverView, error) {
 			online         sql.NullBool
 			statusT, chanT sql.NullInt64
 			raw            string
+			pinLat, pinLon sql.NullFloat64
+			pinHeight      *float64
+			pinNote        string
+			pinT           sql.NullInt64
 		)
 		if err := rows.Scan(&v.ID, &v.ExtID, &v.Source, &first, &last, &online, &statusT,
 			&v.Firmware, &v.Software, &v.Lat, &v.Lon, &raw,
+			&pinLat, &pinLon, &pinHeight, &pinNote, &pinT,
 			&v.Rx1h, &v.Rx24h, &v.Packets24h, &v.OnlyHere24h, &v.Partial24h, &v.Orphans24h,
 			&v.AvgRSSI1h, &v.AvgSNR1h, &chanT, &v.UtilShort, &v.UtilLong, &v.NoiseFloor); err != nil {
 			return nil, err
 		}
 		v.FirstSeen, v.LastSeen = fromMs(first), fromMs(last)
+		if pinLat.Valid && pinLon.Valid {
+			v.Pin = &Pin{Lat: pinLat.Float64, Lon: pinLon.Float64, Height: pinHeight, Note: pinNote, SetT: fromMs(pinT.Int64)}
+			v.Lat, v.Lon = &v.Pin.Lat, &v.Pin.Lon
+		}
 		if statusT.Valid {
 			t := fromMs(statusT.Int64)
 			v.StatusT = &t

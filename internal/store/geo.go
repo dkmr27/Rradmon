@@ -20,12 +20,16 @@ type MapNode struct {
 
 // MapObserver is an observer placed on the map.
 type MapObserver struct {
-	ExtID    string    `json:"ext_id"`
-	Source   string    `json:"source"`
-	State    string    `json:"state"`
-	Lat      float64   `json:"lat"`
-	Lon      float64   `json:"lon"`
-	LastSeen time.Time `json:"last_seen"`
+	ID        int64     `json:"id"`
+	Local     bool      `json:"local"`
+	PosSource string    `json:"pos_source"` // "manual" (set by hand) or "reported" (by the observer)
+	Note      string    `json:"note,omitempty"`
+	ExtID     string    `json:"ext_id"`
+	Source    string    `json:"source"`
+	State     string    `json:"state"`
+	Lat       float64   `json:"lat"`
+	Lon       float64   `json:"lon"`
+	LastSeen  time.Time `json:"last_seen"`
 }
 
 // MapData is everything the map shows.
@@ -42,7 +46,8 @@ func (s *Store) Map(now time.Time) (MapData, error) {
 	rows, err := s.DB.Query(`SELECT d.identity_hash, d.lat, d.lon, d.height, d.pos_source, COALESCE(d.info_t, d.last_seen),
 			COALESCE(d.info, '')
 		FROM destinations d
-		WHERE d.lat IS NOT NULL AND d.lon IS NOT NULL AND d.identity_hash IS NOT NULL
+		WHERE d.lat IS NOT NULL AND d.lon IS NOT NULL AND NOT (d.lat = 0 AND d.lon = 0)
+			AND d.identity_hash IS NOT NULL
 		ORDER BY COALESCE(d.info_t, d.last_seen) DESC`)
 	if err != nil {
 		return md, err
@@ -112,8 +117,12 @@ func (s *Store) Map(now time.Time) (MapData, error) {
 	}
 	for _, o := range obs {
 		if o.Lat != nil && o.Lon != nil {
-			md.Observers = append(md.Observers, MapObserver{ExtID: o.ExtID, Source: o.Source, State: o.State,
-				Lat: *o.Lat, Lon: *o.Lon, LastSeen: o.LastSeen})
+			mo := MapObserver{ID: o.ID, Local: o.Local, PosSource: "reported", ExtID: o.ExtID, Source: o.Source,
+				State: o.State, Lat: *o.Lat, Lon: *o.Lon, LastSeen: o.LastSeen}
+			if o.Pin != nil {
+				mo.PosSource, mo.Note = "manual", o.Pin.Note
+			}
+			md.Observers = append(md.Observers, mo)
 		}
 	}
 	return md, nil

@@ -127,15 +127,19 @@ type Pin struct {
 	SetT   time.Time `json:"set_t"`
 }
 
-var ErrBadPosition = errors.New("store: latitude must be -90..90 and longitude -180..180")
+var ErrBadPosition = errors.New("store: latitude must be -90..90 and longitude -180..180, and not 0, 0 (which means no position)")
 
-// SetPin pins a node (identity hash, hex) to a position.
-func (s *Store) SetPin(identHex string, p Pin) error {
-	ident, err := hex.DecodeString(identHex)
-	if err != nil || len(ident) != 16 {
-		return ErrNotFound
+// ValidPos reports whether a position is usable. 0,0 is what devices send
+// when no position is set, so it counts as none.
+func ValidPos(lat, lon float64) bool {
+	if lat < -90 || lat > 90 || lon < -180 || lon > 180 || lat != lat || lon != lon {
+		return false
 	}
-	if p.Lat < -90 || p.Lat > 90 || p.Lon < -180 || p.Lon > 180 {
+	return !(lat == 0 && lon == 0)
+}
+
+func checkPin(p Pin) error {
+	if !ValidPos(p.Lat, p.Lon) {
 		return ErrBadPosition
 	}
 	if p.Height != nil && (*p.Height < -500 || *p.Height > 10000) {
@@ -143,6 +147,41 @@ func (s *Store) SetPin(identHex string, p Pin) error {
 	}
 	if len([]rune(p.Note)) > 200 {
 		return errors.New("store: note is limited to 200 characters")
+	}
+	return nil
+}
+
+// SetObserverPin sets an observer's position by hand.
+func (s *Store) SetObserverPin(id int64, p Pin) error {
+	if err := checkPin(p); err != nil {
+		return err
+	}
+	res, err := s.DB.Exec(`UPDATE observers SET pin_lat = ?, pin_lon = ?, pin_height = ?, pin_note = ?, pin_t = ?
+		WHERE id = ?`, p.Lat, p.Lon, p.Height, nullStr(p.Note), ms(time.Now()), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ClearObserverPin removes an observer's hand-set position.
+func (s *Store) ClearObserverPin(id int64) error {
+	_, err := s.DB.Exec(`UPDATE observers SET pin_lat = NULL, pin_lon = NULL, pin_height = NULL, pin_note = NULL,
+		pin_t = NULL WHERE id = ?`, id)
+	return err
+}
+
+// SetPin pins a node (identity hash, hex) to a position.
+func (s *Store) SetPin(identHex string, p Pin) error {
+	ident, err := hex.DecodeString(identHex)
+	if err != nil || len(ident) != 16 {
+		return ErrNotFound
+	}
+	if err := checkPin(p); err != nil {
+		return err
 	}
 	_, err = s.DB.Exec(`INSERT INTO node_pins (identity_hash, lat, lon, height, note, set_t) VALUES (?,?,?,?,?,?)
 		ON CONFLICT(identity_hash) DO UPDATE SET lat = excluded.lat, lon = excluded.lon,

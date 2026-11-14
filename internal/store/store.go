@@ -157,6 +157,9 @@ type ObserverState struct {
 // (an MQTT last will) does not move last_seen, which stays the last time the
 // observer itself was heard.
 func (s *Store) ObserverStatus(extID, source string, t time.Time, st ObserverState) error {
+	if st.Lat == nil || st.Lon == nil || !ValidPos(*st.Lat, *st.Lon) {
+		st.Lat, st.Lon = nil, nil // 0,0 or out of range: no position
+	}
 	// Create it if new, without touching last_seen of a known observer: a
 	// retained offline status from yesterday must not make it look seen now.
 	if _, err := s.DB.Exec(`INSERT INTO observers (ext_id, name, source, first_seen, last_seen)

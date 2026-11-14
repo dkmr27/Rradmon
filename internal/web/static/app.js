@@ -608,7 +608,10 @@ function renderNodePage(d) {
 // A small slippy map: Web Mercator, OpenStreetMap tiles (optional), markers
 // for nodes with a known position and for observers. No library needed.
 const TILE = 256;
-const geo = { zoom: 12, cx: 0, cy: 0, fitted: false, data: null, tiles: store("rradmon.tiles") !== "off" };
+const geo = { zoom: 12, cx: 0, cy: 0, fitted: false, data: null, tiles: store("rradmon.tiles") !== "off",
+  sel: null, paths: [] }; // sel: observer whose paths are drawn; paths: nodes it heard directly
+// SNR bands for path lines (LoRa decodes below 0 dB; how far below depends on the spreading factor)
+const snrBand = (v) => (v >= 0 ? "good" : v >= -8 ? "mid" : "weak");
 function project(lat, lon, z) {
   const s = TILE * 2 ** z;
   const sin = Math.sin((Math.max(-85, Math.min(85, lat)) * Math.PI) / 180);
@@ -672,17 +675,37 @@ function drawMap() {
     }
   }
   const d = geo.data || { nodes: [], observers: [] };
+  // Paths from the selected observer to the placed nodes it heard directly
+  const so = d.observers.find((o) => o.id === geo.sel);
+  if (so) {
+    const a = project(so.lat, so.lon, z);
+    let lines = "", labels = "";
+    for (const h of geo.paths) {
+      const nd = d.nodes.find((n) => n.identity === h.identity);
+      if (!nd || h.avg_snr == null) continue;
+      const b = project(nd.lat, nd.lon, z);
+      const band = snrBand(h.avg_snr);
+      lines += `<line class="${band}" x1="${a.x - left}" y1="${a.y - top}" x2="${b.x - left}" y2="${b.y - top}"/>`;
+      const tip = `${nd.name || short(nd.identity, 12)} → ${so.ext_id}: average ${num(h.avg_snr, 1)} dB SNR, ${num(h.avg_rssi, 0)} dBm, ` +
+        `${h.count} reception${h.count === 1 ? "" : "s"} in 7 days; last ${num(h.last_snr, 1)} dB, ${ago(h.last)}`;
+      labels += `<div class="plbl ${band}" style="left:${(a.x + b.x) / 2 - left}px;top:${(a.y + b.y) / 2 - top}px"
+        data-tip="${esc(tip)}">${num(h.avg_snr, 1)} dB</div>`;
+    }
+    html += `<svg class="paths">${lines}</svg>${labels}`;
+  }
   for (const o of d.observers) {
     const p = project(o.lat, o.lon, z);
-    html += `<div class="mk obs ${esc(o.state)}" style="left:${p.x - left}px;top:${p.y - top}px"
-      data-tip="${esc(`Observer ${o.ext_id} · ${o.state}`)}"><span class="lbl">${esc(o.ext_id)}</span></div>`;
+    const tip = `Observer ${o.ext_id}${o.local ? " (local)" : ""} · ${o.state} · position ${o.pos_source === "manual" ? "set by hand" : "reported by the observer"}` +
+      (o.note ? ` · ${o.note}` : "") + (o.id === geo.sel ? " · click to hide paths" : " · click to show paths to the nodes it hears");
+    html += `<button class="mk obs ${esc(o.state)}${o.id === geo.sel ? " sel" : ""}" style="left:${p.x - left}px;top:${p.y - top}px"
+      data-obs="${o.id}" data-tip="${esc(tip)}"><span class="lbl">${esc(o.ext_id)}</span></button>`;
   }
   for (const nd of d.nodes) {
     const p = project(nd.lat, nd.lon, z);
     const rec = recency(nd.last_seen);
     const name = nd.name || short(nd.identity, 12);
     const tip = [name, RECENCY_TEXT[rec], nd.last_rssi != null ? `last ${num(nd.last_rssi, 0)} dBm / ${num(nd.last_snr, 1)} dB` : "",
-      nd.height != null ? `${num(nd.height, 0)} m` : "", `position from ${nd.pos_source} announce`].filter(Boolean).join(" · ");
+      nd.height != null ? `${num(nd.height, 0)} m` : "", nd.pos_source === "manual" ? "position set by hand" : "position from discovery announce"].filter(Boolean).join(" · ");
     html += `<button class="mk node ${rec}" style="left:${p.x - left}px;top:${p.y - top}px"
       data-id="${nd.identity}" data-tip="${esc(tip)}"><span class="lbl">${esc(name)}</span></button>`;
   }
@@ -695,15 +718,44 @@ async function loadMap() {
   $("#mapSummary").innerHTML = `${d.nodes.length} node${d.nodes.length === 1 ? "" : "s"} placed` +
     (d.unplaced ? ` · ${d.unplaced} without a known position` : "") +
     ` · ${d.observers.length} observer${d.observers.length === 1 ? "" : "s"} placed`;
+  if (geo.sel != null && !d.observers.some((o) => o.id === geo.sel)) geo.sel = null;
+  if (geo.sel != null) await loadPaths();
+  renderObsList();
   $("#mapList").innerHTML = d.nodes.map((nd) => `<li><button class="link" data-id="${nd.identity}">${esc(nd.name || short(nd.identity, 12))}</button>
     <span class="muted small">${esc(nd.info || "")}</span></li>`).join("") || '<li class="muted">No node has announced a position yet. Interface-discovery announces carry one.</li>';
   if (!geo.fitted) fitMap(); else drawMap();
+}
+async function loadPaths() {
+  try { geo.paths = await api(`/api/observers/${geo.sel}/nodes?days=7`); } catch { geo.paths = []; }
+}
+async function selectObserver(id) {
+  geo.sel = geo.sel === id ? null : id;
+  geo.paths = [];
+  if (geo.sel != null) await loadPaths();
+  renderObsList();
+  drawMap();
+}
+function renderObsList() {
+  const d = geo.data;
+  $("#mapObsList").innerHTML = d.observers.map((o) => `<li><button class="link${o.id === geo.sel ? " sel" : ""}" data-obs="${o.id}">${esc(o.ext_id)}</button>
+    <span class="muted small">${o.local ? "local · " : ""}${o.pos_source === "manual" ? "set by hand" : "reported"}</span></li>`).join("") ||
+    '<li class="muted small">No observer has a position. The admin can set one on the observer\'s page.</li>';
+  const so = d.observers.find((o) => o.id === geo.sel);
+  if (!so) {
+    $("#pathInfo").innerHTML = d.observers.length ? '<p class="muted">Select an observer to draw lines to the placed nodes it heard directly in the last 7 days, labelled with the average SNR.</p>' : "";
+    return;
+  }
+  const placed = new Set(d.nodes.map((n) => n.identity));
+  const shown = geo.paths.filter((h) => placed.has(h.identity) && h.avg_snr != null).length;
+  const unplaced = geo.paths.filter((h) => !placed.has(h.identity)).length;
+  $("#pathInfo").innerHTML = `<div class="path-key"><span><i class="good"></i>0 dB or better</span><span><i class="mid"></i>0 to −8 dB</span><span><i class="weak"></i>below −8 dB</span></div>
+    <p class="muted">${shown} path${shown === 1 ? "" : "s"} from ${esc(so.ext_id)}, average SNR over 7 days of direct receptions${unplaced ? `; ${unplaced} more heard node${unplaced === 1 ? " has" : "s have"} no position` : ""}.</p>`;
 }
 (function mapEvents() {
   const el = $("#map");
   let drag = null;
   el.addEventListener("pointerdown", (e) => {
-    if (e.target.closest(".mk, .map-ctl")) return;
+    if (e.target.closest(".mk, .plbl, .map-ctl")) return;
     drag = { x: e.clientX, y: e.clientY, cx: geo.cx, cy: geo.cy };
     el.setPointerCapture(e.pointerId);
     el.classList.add("dragging");
@@ -715,7 +767,7 @@ async function loadMap() {
       drawMap();
       return;
     }
-    const mk = e.target.closest(".mk");
+    const mk = e.target.closest(".mk, .plbl");
     const tip = $("#tip");
     if (mk) {
       tip.textContent = mk.dataset.tip;
@@ -736,6 +788,8 @@ async function loadMap() {
   el.addEventListener("click", (e) => {
     const mk = e.target.closest(".mk.node");
     if (mk) openNode(mk.dataset.id);
+    const ob = e.target.closest(".mk.obs");
+    if (ob) selectObserver(Number(ob.dataset.obs));
   });
   // Offline or blocked tiles: drop them and let the grid show (inline
   // onerror handlers would be blocked by the page's content security policy)
@@ -746,6 +800,10 @@ async function loadMap() {
   const tiles = $("#mapTiles");
   tiles.checked = geo.tiles;
   tiles.onchange = () => { geo.tiles = tiles.checked; store("rradmon.tiles", geo.tiles ? "on" : "off"); drawMap(); };
+  $("#mapObsList").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-obs]");
+    if (b) selectObserver(Number(b.dataset.obs));
+  });
   $("#mapList").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-id]");
     if (b) openNode(b.dataset.id);
@@ -877,12 +935,12 @@ async function loadObserverPage(id) {
   const extra = [];
   if (st.battery_mv >= 2500) extra.push(kv("Battery", `${(st.battery_mv / 1000).toFixed(2)} V`)); // below: none fitted
   if (st.rssi_wifi) extra.push(kv("Wi-Fi", `${st.rssi_wifi} dBm`));
-  if (o.lat != null && o.lon != null) extra.push(kv("Position", `${num(o.lat, 5)}, ${num(o.lon, 5)}`));
   $("#observerHead").innerHTML = `
     <header class="node-head">
       <h2><span class="state ${esc(o.state)}"></span> <span class="mono">${esc(o.ext_id)}</span> <span class="tag">${srcLabel(o)}</span>
         <span class="muted small">${STATE_TEXT[o.state] || esc(o.state)}</span></h2>
       <div class="muted">${esc(o.firmware) || "firmware not reported"}${o.software ? " · " + esc(o.software) : ""}</div>
+      ${obsPinLine(o)}
     </header>
     <div class="kv kv4">
       ${kv("Last heard", ago(o.last_seen), new Date(o.last_seen).toLocaleString())}
@@ -895,6 +953,8 @@ async function loadObserverPage(id) {
       ${kv("Losses and errors, 24 h", problems.length ? problems.join(" · ") : "none")}
       ${extra.join("")}
     </div>`;
+  const pinBtn = $("#obsPinEdit");
+  if (pinBtn) pinBtn.onclick = () => showPinDialog({ kind: "observer", id: o.id }, o.pin, o.lat != null ? { lat: o.lat, lon: o.lon } : null);
   loadObserverNodes(o);
   const pts = await api(`/api/channel/${o.id}?hours=${obsHours}`);
   if (String(currentObserver) !== String(id)) return;
@@ -1059,6 +1119,7 @@ function setAdmin(on, csrf = "") {
   $('.tabs [data-tab="settings"]').hidden = !on;
   if (!on && currentTab === "settings") showTab("live");
   if (was !== on && currentTab === "node" && lastNodeData) renderNodePage(lastNodeData);
+  if (was !== on && (currentTab === "observer" || currentTab === "local") && currentObserver != null) loadObserverPage(currentObserver);
 }
 $("#adminBtn").onclick = async () => {
   if (admin.on) {
@@ -1176,11 +1237,18 @@ function pinLine(d) {
   const btn = admin.on ? `<button class="btn" id="pinEdit">${p ? "Edit pinned position" : "Set position by hand"}</button>` : "";
   return txt || btn ? `<div class="small pin-line">${txt}${btn}</div>` : "";
 }
-let pinNode = null;
+// The dialog sets a node's or an observer's position: target is
+// { kind: "node" | "observer", id }.
+let pinTarget = null;
 function openPinDialog(d) {
-  pinNode = d.identity;
-  const p = d.pin;
-  const src = p || (d.dests || []).find((x) => x.lat != null) || {};
+  showPinDialog({ kind: "node", id: d.identity }, d.pin, (d.dests || []).find((x) => x.lat != null));
+}
+function showPinDialog(target, p, fallback) {
+  pinTarget = target;
+  $("#pinHelp").textContent = target.kind === "node"
+    ? "For nodes that do not announce a position. A pinned position replaces the announced one on the map."
+    : "Where this observer's radio is. A position set here replaces any the observer reports.";
+  const src = p || fallback || {};
   $("#pinLat").value = src.lat ?? "";
   $("#pinLon").value = src.lon ?? "";
   $("#pinHeight").value = src.height ?? "";
@@ -1191,11 +1259,22 @@ function openPinDialog(d) {
   $("#pinLat").focus();
 }
 $("#pinCancel").onclick = () => $("#pinDlg").close();
+const pinURL = () => (pinTarget.kind === "node" ? `/api/admin/pins/${pinTarget.id}` : `/api/admin/observer-pins/${pinTarget.id}`);
+function obsPinLine(o) {
+  const p = o.pin;
+  const pos = p
+    ? `Position set by hand: ${num(p.lat, 5)}, ${num(p.lon, 5)}${p.height != null ? ` · ${num(p.height, 0)} m` : ""}${p.note ? ` · ${esc(p.note)}` : ""}`
+    : o.lat != null ? `Position reported by the observer: ${num(o.lat, 5)}, ${num(o.lon, 5)}` : "";
+  const btn = admin.on ? `<button class="btn" id="obsPinEdit">${p ? "Edit position" : "Set position by hand"}</button>` : "";
+  return pos || btn ? `<div class="small pin-line">${pos ? `<span>${pos}</span>` : ""}${btn}</div>` : "";
+}
 async function pinDone(fn) {
   try {
     await fn();
     $("#pinDlg").close();
-    if (currentNode === pinNode) loadNodePage(pinNode);
+    const t = pinTarget;
+    if (t.kind === "node" && currentNode === t.id) loadNodePage(t.id);
+    if (t.kind === "observer") { observerList = []; if (String(currentObserver) === String(t.id)) loadObserverPage(t.id); }
   } catch (ex) {
     $("#pinErr").textContent = ex.message;
   }
@@ -1205,11 +1284,11 @@ $("#pinForm").onsubmit = (e) => {
   const h = $("#pinHeight").value.trim();
   const body = { lat: Number($("#pinLat").value), lon: Number($("#pinLon").value), note: $("#pinNote").value.trim() };
   if (h !== "") body.height = Number(h);
-  pinDone(() => apiWrite("PUT", `/api/admin/pins/${pinNode}`, body));
+  pinDone(() => apiWrite("PUT", pinURL(), body));
 };
 $("#pinClear").onclick = () => {
-  if (confirm("Remove the pinned position? The node goes back to its announced position, if it has one.")) {
-    pinDone(() => apiWrite("DELETE", `/api/admin/pins/${pinNode}`));
+  if (confirm("Remove the position set by hand? It goes back to the announced or reported one, if there is one.")) {
+    pinDone(() => apiWrite("DELETE", pinURL()));
   }
 };
 
