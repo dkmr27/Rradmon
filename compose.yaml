@@ -3,7 +3,7 @@
 # password in secret/mqtt_password (also git-ignored), then:
 #
 #   docker compose up -d
-#   docker compose exec rradmon /rradmon admin set-password
+#   docker compose exec rradmon rradmon admin set-password
 #
 # .env:
 #   RRADMON_MQTT_URL=tcp://192.168.1.10:1883

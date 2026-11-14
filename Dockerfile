@@ -4,6 +4,7 @@
 # from the build machine:
 #
 #   docker build -t rradmon .
+#   docker build --build-arg VERSION=$(git describe --tags --always) -t rradmon .
 #   docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6 -t rradmon .
 #
 # The database lives in /data (a volume). See the README, "Docker".
@@ -18,6 +19,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN case "$TARGETVARIANT" in v6) export GOARM=6 ;; v7) export GOARM=7 ;; esac; \
+    VERSION="${VERSION#v}"; \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags "-s -w -buildid= -X main.version=$VERSION" -o /out/rradmon ./cmd/rradmon \
     && mkdir -p /out/data
@@ -25,7 +27,7 @@ RUN case "$TARGETVARIANT" in v6) export GOARM=6 ;; v7) export GOARM=7 ;; esac; \
 FROM scratch
 # CA certificates for MQTT over TLS (ssl://, wss://)
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=build /out/rradmon /rradmon
+COPY --from=build /out/rradmon /usr/local/bin/rradmon
 COPY --from=build --chown=65532:65532 /out/data /data
 # Not root. For a serial device, add its group: --group-add <gid of the device>
 USER 65532:65532
@@ -35,5 +37,5 @@ WORKDIR /data
 ENV RRADMON_HTTP=0.0.0.0:8080
 EXPOSE 8080
 VOLUME /data
-ENTRYPOINT ["/rradmon"]
+ENTRYPOINT ["rradmon"]
 CMD ["help"]

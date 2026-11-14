@@ -30,6 +30,8 @@ func startHTTP(addr string, st *store.Store, log *slog.Logger) (*web.Server, fun
 	}
 	if ip := net.ParseIP(host); host == "localhost" || (ip != nil && ip.IsLoopback()) {
 		ws.LoopbackOnly = true
+	} else if inContainer() {
+		log.Info("web UI listens on all interfaces of the container; the host's port mapping decides who can reach it", "addr", addr)
 	} else {
 		log.Warn("web UI is reachable from the network: anyone who can reach it can view it; set an admin password, and use HTTPS beyond a home network", "addr", addr)
 	}
@@ -112,4 +114,11 @@ func defaultHTTP() string {
 		return a
 	}
 	return "127.0.0.1:8080"
+}
+
+// inContainer reports whether this runs in a Docker container, where the
+// host's port mapping, not the listen address, decides who can connect.
+func inContainer() bool {
+	_, err := os.Stat("/.dockerenv")
+	return err == nil
 }

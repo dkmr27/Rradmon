@@ -177,7 +177,8 @@ ARM (Raspberry Pi):
 docker build -t rradmon .
 ```
 
-The image is small (only the program and CA certificates), runs as a
+(Add `--build-arg VERSION=$(git describe --tags --always)` to stamp the
+version.) The image is small (only the program and CA certificates), runs as a
 non-root user, and keeps its database in the `/data` volume.
 
 With Docker Compose, using the included [compose.yaml](compose.yaml):
@@ -194,7 +195,7 @@ With Docker Compose, using the included [compose.yaml](compose.yaml):
 3. Start it and set the admin password:
    ```
    docker compose up -d
-   docker compose exec rradmon /rradmon admin set-password
+   docker compose exec rradmon rradmon admin set-password
    ```
 
 The web UI is then at http://localhost:8080. To open it to your network, add
