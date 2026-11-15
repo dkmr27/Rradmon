@@ -137,6 +137,11 @@ type Device struct {
 	configured atomic.Bool
 	promisc    atomic.Bool
 
+	// Promiscuous-mode check: promiscSince is when Configure last turned it
+	// on (unix ns, set by Configure); watch belongs to the reader goroutine.
+	promiscSince atomic.Int64
+	watch        promiscWatch
+
 	done    chan struct{}
 	readErr error
 }
@@ -195,6 +200,7 @@ func (d *Device) Configure(ctx context.Context, cfg RadioConfig) error {
 	d.info.RadioOn, d.info.Promiscuous = false, false
 	d.mu.Unlock()
 	d.promisc.Store(cfg.Promiscuous)
+	d.promiscSince.Store(d.now().UnixNano())
 
 	cmds := []kissCmd{
 		{CmdFrequency, be32(cfg.FreqHz)},
@@ -366,6 +372,7 @@ func (d *Device) handle(f kiss.Frame) Event {
 			fr.RSSI, fr.SNR, fr.HasSignal = d.rssi, d.snr, true
 		}
 		d.haveRSSI, d.haveSNR = false, false
+		d.watchState().frame = true
 		return fr
 	case CmdStatChtm:
 		if len(f.Data) >= 11 {
@@ -383,6 +390,7 @@ func (d *Device) handle(f kiss.Frame) Event {
 				v := float32(int(b[10]) - RSSIOffset)
 				cs.Interference = &v
 			}
+			d.checkPromisc(cs)
 			return cs
 		}
 	case CmdError:
@@ -487,4 +495,49 @@ func errorText(code byte) string {
 		return "modem timeout"
 	}
 	return fmt.Sprintf("error 0x%02x", code)
+}
+
+// Some firmware accepts promiscuous mode and then delivers no frames at all
+// (RNode 1.86 on nRF52 does). The channel reports still show the traffic, so
+// when the channel has been busy for a while and not one frame has arrived,
+// say so once, with the way out.
+const (
+	promiscBusyUtil    = 1  // short-term utilisation, percent, that counts as traffic
+	promiscBusyReports = 30 // busy channel reports (about one a second) before warning
+	promiscWarnAfter   = 2 * time.Minute
+)
+
+type promiscWatch struct {
+	since  int64 // promiscSince this state belongs to
+	busy   int   // channel reports with traffic since then
+	frame  bool  // a frame has arrived since then
+	warned bool
+}
+
+// watchState returns the check's state, starting afresh after each
+// Configure. Reader goroutine only.
+func (d *Device) watchState() *promiscWatch {
+	if since := d.promiscSince.Load(); d.watch.since != since {
+		d.watch = promiscWatch{since: since}
+	}
+	return &d.watch
+}
+
+func (d *Device) checkPromisc(cs ChannelStats) {
+	if !d.promisc.Load() {
+		return
+	}
+	w := d.watchState()
+	if w.frame || w.warned {
+		return
+	}
+	if cs.UtilShort >= promiscBusyUtil {
+		w.busy++
+	}
+	if w.busy >= promiscBusyReports && cs.T.Sub(time.Unix(0, w.since)) >= promiscWarnAfter {
+		w.warned = true
+		d.log.Warn("rnode: the channel is busy but promiscuous mode has delivered no frames; "+
+			"some firmware does this (RNode 1.86 on nRF52 boards): restart with -promisc=false",
+			"busy_reports", w.busy, "since", time.Unix(0, w.since).Format(time.TimeOnly))
+	}
 }

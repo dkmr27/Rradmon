@@ -33,10 +33,12 @@ so Rradmon shows what is visible on air and makes the best of it.
 
 ## Requirements
 
-- An RNode with firmware that supports promiscuous mode. Tested with RNode
-  firmware 1.86 on a LilyGO T3S3. If your firmware's promiscuous mode delivers
-  nothing, use `-promisc=false`: you then see whole packets only, without
-  split-frame detail.
+- An RNode. Tested with RNode firmware 1.86 on a LilyGO T3S3 (ESP32) and on
+  an nRF52 board. Rradmon uses the RNode's promiscuous mode, which also shows
+  split frames, but on nRF52 boards (RAK4631 and others) firmware 1.86 turns
+  it on and then delivers nothing. Use `-promisc=false` there: you then see
+  whole packets only, without split-frame detail. Rradmon warns when the
+  channel is busy but promiscuous mode has delivered nothing for two minutes.
 - Windows, macOS or Linux, including a Raspberry Pi. Nothing else to install.
   A Docker image is also available for servers (see Docker).
 - Optional: an MQTT broker (such as Mosquitto) if you want more than one
