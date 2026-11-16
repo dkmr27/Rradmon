@@ -132,6 +132,7 @@
       <label class="small"><input type="checkbox" id="mapTiles"> OpenStreetMap tiles</label>
     </div>
     <div class="map-wrap">
+      <div class="map-col">
       <div id="map" class="map">
         <div id="mapLayer"></div>
         <div class="map-ctl">
@@ -147,6 +148,9 @@
           <span><i class="sq"></i>observer</span>
         </div>
         <div class="map-attr">Tiles © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors</div>
+      </div>
+      <div id="mapGrip" class="map-grip" role="separator" aria-orientation="horizontal" aria-label="Map height" tabindex="0"
+        title="Drag to change the map's height; double-click for the default"></div>
       </div>
       <aside class="map-side">
         <h3>Observers</h3>

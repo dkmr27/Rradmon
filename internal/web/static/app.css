@@ -222,7 +222,12 @@ input.hash-search { min-width: 0; width: 170px; font-family: var(--mono); }
   background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
   background-size: 64px 64px; }
 .map.dragging { cursor: grabbing; }
-.map .tile { position: absolute; width: 256px; height: 256px; pointer-events: none; }
+.map .tile { position: absolute; left: 0; top: 0; width: 256px; height: 256px; pointer-events: none; transform-origin: 0 0; }
+.map-col { min-width: 0; }
+.map-grip { height: 14px; margin-top: 2px; cursor: ns-resize; touch-action: none; display: flex; align-items: center; justify-content: center; border-radius: 6px; }
+.map-grip::before { content: ""; width: 48px; height: 4px; border-radius: 2px; background: var(--border); }
+.map-grip:hover::before, .map-grip.dragging::before, .map-grip:focus-visible::before { background: var(--text-3); }
+.map-grip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 :root[data-theme="dark"] .map .tile { filter: brightness(0.75) contrast(1.05) saturate(0.85); }
 @media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) .map .tile { filter: brightness(0.75) contrast(1.05) saturate(0.85); } }
 .mk { position: absolute; transform: translate(-50%, -50%); border: 2px solid var(--surface); padding: 0; cursor: pointer; }

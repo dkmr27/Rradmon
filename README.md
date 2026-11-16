@@ -26,7 +26,8 @@ Status: early (0.2.0). It runs well on the author's bench; expect rough edges.
   over time, and the nodes it hears directly.
 - **Map**: nodes that publish a position (Reticulum interface discovery), and
   nodes or observers you place by hand. Click an observer to draw lines to the
-  nodes it heard, coloured by average SNR.
+  nodes it heard, coloured by average SNR. Drag the bar under the map to
+  change its height; your browser remembers it.
 
 Most Reticulum traffic is encrypted and data packets carry no sender address,
 so Rradmon shows what is visible on air and makes the best of it.

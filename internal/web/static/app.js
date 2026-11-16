@@ -656,20 +656,93 @@ function recency(t) {
   return age < 3600e3 ? "fresh" : age < 86400e3 ? "day" : "old";
 }
 const RECENCY_TEXT = { fresh: "heard in the last hour", day: "heard in the last day", old: "not heard for over a day" };
-// The OpenStreetMap tiles covering a view (left, top: world pixels of its top-left corner)
-function tilesHTML(z, left, top, W, H) {
-  const n = 2 ** z;
-  let html = "";
-  const x0 = Math.floor(left / TILE), x1 = Math.floor((left + W) / TILE);
-  const y0 = Math.max(0, Math.floor(top / TILE)), y1 = Math.min(n - 1, Math.floor((top + H) / TILE));
-  for (let ty = y0; ty <= y1; ty++) {
-    for (let tx = x0; tx <= x1; tx++) {
-      const wx = ((tx % n) + n) % n;
-      html += `<img class="tile" alt="" draggable="false" style="left:${tx * TILE - left}px;top:${ty * TILE - top}px"
-        src="https://tile.openstreetmap.org/${z}/${wx}/${ty}.png">`;
-    }
+// The OpenStreetMap tiles of a map, kept between redraws: dragging only
+// moves the images already there (rebuilding them made them flash), new ones
+// are added as they come into view and those far out of view are dropped.
+// After a zoom the previous zoom's tiles stay underneath, scaled, until the
+// new ones have loaded.
+class TileLayer {
+  constructor(host) {
+    this.el = document.createElement("div");
+    host.prepend(this.el);
+    this.z = null;
+    this.cur = new Map(); // "x/y" -> img at zoom this.z
+    this.back = null; // { z, tiles } from the previous zoom
+    // Offline or blocked tiles: hide them and let the grid show (inline
+    // onerror handlers would be blocked by the page's content security policy)
+    this.el.addEventListener("error", (e) => { if (e.target.tagName === "IMG") { e.target.dataset.failed = "1"; e.target.hidden = true; this.settle(); } }, true);
+    this.el.addEventListener("load", () => this.settle(), true);
   }
-  return html;
+  clear() { this.el.replaceChildren(); this.cur.clear(); this.back = null; this.z = null; }
+  draw(on, z, left, top, W, H) {
+    if (!on) return this.clear();
+    if (z !== this.z) {
+      // Keep the old zoom as a backdrop if it shows something; otherwise
+      // keep the backdrop there already
+      const loaded = [...this.cur.values()].some((i) => i.complete && !i.dataset.failed);
+      if (loaded) { this.dropBack(); this.back = { z: this.z, tiles: this.cur }; } else for (const i of this.cur.values()) i.remove();
+      this.cur = new Map();
+      this.z = z;
+    }
+    const n = 2 ** z;
+    const x0 = Math.floor(left / TILE), x1 = Math.floor((left + W) / TILE);
+    const y0 = Math.max(0, Math.floor(top / TILE)), y1 = Math.min(n - 1, Math.floor((top + H) / TILE));
+    for (let ty = y0; ty <= y1; ty++) {
+      for (let tx = x0; tx <= x1; tx++) {
+        const key = `${tx}/${ty}`;
+        let img = this.cur.get(key);
+        if (!img) {
+          img = document.createElement("img");
+          img.className = "tile";
+          img.alt = "";
+          img.draggable = false;
+          img.src = `https://tile.openstreetmap.org/${z}/${((tx % n) + n) % n}/${ty}.png`;
+          this.cur.set(key, img);
+          this.el.append(img);
+        }
+        img.style.transform = `translate(${tx * TILE - left}px, ${ty * TILE - top}px)`;
+      }
+    }
+    // Drop tiles well out of view (keep a margin of two for dragging back)
+    for (const [key, img] of this.cur) {
+      const [tx, ty] = key.split("/").map(Number);
+      if (tx < x0 - 2 || tx > x1 + 2 || ty < y0 - 2 || ty > y1 + 2) { img.remove(); this.cur.delete(key); }
+    }
+    if (this.back) {
+      const k = 2 ** (z - this.back.z), size = TILE * k;
+      if (k > 16 || k < 1 / 16) this.dropBack();
+      else {
+        for (const [key, img] of this.back.tiles) {
+          const [tx, ty] = key.split("/").map(Number);
+          img.style.transform = `translate(${tx * size - left}px, ${ty * size - top}px) scale(${k})`;
+        }
+      }
+    }
+    this.visible = { x0, x1, y0, y1 };
+    this.settle();
+  }
+  // The backdrop goes once every tile in view has loaded (or failed)
+  settle() {
+    if (!this.back || !this.visible) return;
+    const { x0, x1, y0, y1 } = this.visible;
+    for (const [key, img] of this.cur) {
+      const [tx, ty] = key.split("/").map(Number);
+      if (tx >= x0 && tx <= x1 && ty >= y0 && ty <= y1 && !img.complete && !img.dataset.failed) return;
+    }
+    this.dropBack();
+  }
+  dropBack() {
+    if (!this.back) return;
+    for (const img of this.back.tiles.values()) img.remove();
+    this.back = null;
+  }
+}
+const mapTiles = new TileLayer($("#map"));
+const pickTiles = new TileLayer($("#pickMap"));
+// Redraw at most once per frame while dragging or resizing
+let mapFrame = 0;
+function scheduleMap() {
+  if (!mapFrame) mapFrame = requestAnimationFrame(() => { mapFrame = 0; drawMap(); });
 }
 // World pixels back to a position
 function unproject(x, y, z) {
@@ -684,7 +757,8 @@ function drawMap() {
   if (!W) return;
   const z = geo.zoom, n = 2 ** z;
   const left = geo.cx - W / 2, top = geo.cy - H / 2;
-  let html = geo.tiles ? tilesHTML(z, left, top, W, H) : "";
+  mapTiles.draw(geo.tiles, z, left, top, W, H);
+  let html = "";
   const d = geo.data || { nodes: [], observers: [] };
   // Paths from the selected observer to the placed nodes it heard directly
   const so = d.observers.find((o) => o.id === geo.sel);
@@ -775,7 +849,7 @@ function renderObsList() {
     if (drag) {
       geo.cx = drag.cx - (e.clientX - drag.x);
       geo.cy = drag.cy - (e.clientY - drag.y);
-      drawMap();
+      scheduleMap();
       return;
     }
     const mk = e.target.closest(".mk, .plbl");
@@ -802,9 +876,6 @@ function renderObsList() {
     const ob = e.target.closest(".mk.obs");
     if (ob) selectObserver(Number(ob.dataset.obs));
   });
-  // Offline or blocked tiles: drop them and let the grid show (inline
-  // onerror handlers would be blocked by the page's content security policy)
-  $("#mapLayer").addEventListener("error", (e) => { if (e.target.tagName === "IMG") e.target.remove(); }, true);
   $("#mapIn").onclick = () => setZoom(geo.zoom + 1);
   $("#mapOut").onclick = () => setZoom(geo.zoom - 1);
   $("#mapFit").onclick = () => fitMap();
@@ -819,8 +890,50 @@ function renderObsList() {
     const b = e.target.closest("button[data-id]");
     if (b) openNode(b.dataset.id);
   });
-  addEventListener("resize", () => { if (currentTab === "map") drawMap(); });
+  // Window resizes and the height grip change the map's size (the grip and
+  // the window event also redraw directly: a page in a hidden or background
+  // tab gets no ResizeObserver callbacks)
+  const resized = () => { if (currentTab === "map") scheduleMap(); };
+  new ResizeObserver(resized).observe(el);
+  addEventListener("resize", resized);
+  mapGrip();
 })();
+
+// The map's height: drag the grip under it; remembered in this browser.
+// Double-click the grip for the default height again.
+function mapGrip() {
+  const el = $("#map"), grip = $("#mapGrip");
+  const clamp = (h) => Math.round(Math.max(300, Math.min(h, 3000)));
+  const setHeight = (h) => { el.style.height = h == null ? "" : `${clamp(h)}px`; scheduleMap(); };
+  const saved = Number(store("rradmon.mapHeight"));
+  if (saved) el.style.height = `${clamp(saved)}px`;
+  let start = null;
+  grip.addEventListener("pointerdown", (e) => {
+    start = { y: e.clientY, h: el.offsetHeight };
+    grip.setPointerCapture(e.pointerId);
+    grip.classList.add("dragging");
+    e.preventDefault();
+  });
+  grip.addEventListener("pointermove", (e) => {
+    if (start) setHeight(start.h + e.clientY - start.y);
+  });
+  const end = () => {
+    if (!start) return;
+    start = null;
+    grip.classList.remove("dragging");
+    store("rradmon.mapHeight", String(el.offsetHeight));
+  };
+  grip.addEventListener("pointerup", end);
+  grip.addEventListener("pointercancel", end);
+  grip.addEventListener("dblclick", () => { setHeight(null); store("rradmon.mapHeight", ""); });
+  grip.addEventListener("keydown", (e) => {
+    const step = e.key === "ArrowDown" ? 40 : e.key === "ArrowUp" ? -40 : 0;
+    if (!step) return;
+    e.preventDefault();
+    setHeight(el.offsetHeight + step);
+    store("rradmon.mapHeight", String(el.offsetHeight));
+  });
+}
 
 // ---------- observers ----------
 // A stable list (local first, then online, then by name) with a 24 h noise
@@ -1302,7 +1415,8 @@ function pickDraw() {
   const W = el.clientWidth, H = el.clientHeight;
   if (!W) return;
   const z = pick.zoom, left = pick.cx - W / 2, top = pick.cy - H / 2;
-  let html = geo.tiles ? tilesHTML(z, left, top, W, H) : "";
+  pickTiles.draw(geo.tiles, z, left, top, W, H);
+  let html = "";
   for (const o of geo.data?.observers || []) {
     const p = project(o.lat, o.lon, z);
     html += `<i class="pick-ref obs" style="left:${p.x - left}px;top:${p.y - top}px"></i>`;
@@ -1367,7 +1481,6 @@ function pickZoom(z, ax, ay) {
     const r = el.getBoundingClientRect();
     pickZoom(pick.zoom + (e.deltaY < 0 ? 1 : -1), e.clientX - r.left, e.clientY - r.top);
   }, { passive: false });
-  $("#pickLayer").addEventListener("error", (e) => { if (e.target.tagName === "IMG") e.target.remove(); }, true);
   $("#pickIn").onclick = () => pickZoom(pick.zoom + 1);
   $("#pickOut").onclick = () => pickZoom(pick.zoom - 1);
   // Typed coordinates move the marker
