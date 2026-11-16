@@ -21,7 +21,9 @@ Status: early (0.2.0). It runs well on the author's bench; expect rough edges.
   details and proofs are decoded where Reticulum leaves them readable.
 - **Nodes**: every destination heard, searchable by name or hash, with announce
   rates and best signal. A node page has signal history per observer and
-  announce history.
+  announce history. The admin can give any node a name and a position by hand
+  (for nodes that announce none, or a better one); they are used everywhere
+  instead of the announced ones, and the node page shows both.
 - **Observers**: each receiver with its noise floor and channel utilisation
   over time, and the nodes it hears directly.
 - **Map**: nodes that publish a position (Reticulum interface discovery), and
@@ -153,7 +155,8 @@ in [docs/spec-v0.md](docs/spec-v0.md), section 5.
 ## Admin and settings
 
 Anyone who can open the web UI can view it. Changes need the admin password:
-the Settings tab, positions set by hand, and removing stored payloads. Set the
+the Settings tab, names and positions set by hand, and removing stored
+payloads. Set the
 password from the command line on the machine that runs Rradmon:
 
 ```

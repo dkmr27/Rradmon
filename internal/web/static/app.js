@@ -299,6 +299,11 @@ function clearFeed() {
   feed.oldest = Infinity;
   $("#olderBtn").disabled = false;
 }
+// After a node is renamed the rows already shown carry the old name
+function reloadFeedNames() {
+  clearFeed();
+  loadFeed().catch(console.error);
+}
 async function loadFeed() {
   const q = feed.search ? `&q=${encodeURIComponent(feed.search)}` : "";
   const rows = await api(`/api/feed?limit=150${q}`);
@@ -412,7 +417,7 @@ async function loadNodes() {
   $("#nodesEmpty").hidden = rows.length > 0;
   $("#nodesBody").innerHTML = rows
     .map((n) => {
-      const name = n.name ? esc(n.name) : `<span class="mono">${short(n.identity, 12)}</span>`;
+      const name = nodeName(n);
       const apps = (n.apps || []).map((a) => `<span class="tag">${esc(a.replace(/^rnstransport\./, ""))}</span>`).join("");
       return `<tr data-id="${n.identity}">
         <td>${name}<div class="muted small">${copyHash(n.identity, "Identity hash. Click to copy.")}</div></td>
@@ -512,9 +517,10 @@ function renderNodePage(d) {
   page.innerHTML = `
     <header class="node-head">
       <h2>${d.name ? esc(d.name) : "Unnamed node"}</h2>
+      ${d.name_manual ? `<div class="small">Name set by hand · ${d.announced_name ? `announced as “${esc(d.announced_name)}”` : "it announces no name"}</div>` : ""}
       <div class="muted">Identity ${copyHash(d.identity)}</div>
       <div>${apps || '<span class="muted">seen only as a relay</span>'}</div>
-      ${placed ? `<div class="small">${num(placed.lat, 5)}, ${num(placed.lon, 5)}${placed.height != null ? ` · ${num(placed.height, 0)} m` : ""}
+      ${placed ? `<div class="small">${d.pin ? "Announced position" : "Position"}: ${num(placed.lat, 5)}, ${num(placed.lon, 5)}${placed.height != null ? ` · ${num(placed.height, 0)} m` : ""}
         <button class="link" data-map="1" data-lat="${placed.lat}" data-lon="${placed.lon}">show on map</button></div>` : ""}
       ${pinLine(d)}
     </header>
@@ -1009,7 +1015,7 @@ async function loadObserverNodes(o) {
   const list = await api(`/api/observers/${o.id}/nodes?days=7`);
   if (String(currentObserver) !== String(o.id)) return;
   $("#obsNodesBody").innerHTML = list.map((n) => `<tr data-id="${n.identity}" data-obs="${esc(o.ext_id)}">
-      <td>${n.name ? esc(n.name) : `<span class="mono">${short(n.identity, 12)}</span>`}<div class="muted small">${copyHash(n.identity, "Identity hash. Click to copy.")}</div></td>
+      <td>${nodeName(n)}<div class="muted small">${copyHash(n.identity, "Identity hash. Click to copy.")}</div></td>
       <td class="num">${n.count}</td>
       <td title="${new Date(n.last).toLocaleString()}">${ago(n.last)}</td>
       <td class="num">${num(n.last_rssi, 0)} dBm / ${num(n.last_snr, 2)} dB</td>
@@ -1360,29 +1366,53 @@ function pinLine(d) {
     ? `<span>Pinned by hand: ${num(p.lat, 5)}, ${num(p.lon, 5)}${p.height != null ? ` · ${num(p.height, 0)} m` : ""}${p.note ? ` · ${esc(p.note)}` : ""}</span>
        <button class="link" data-map="1" data-lat="${p.lat}" data-lon="${p.lon}">show on map</button>`
     : "";
-  const btn = admin.on ? `<button class="btn" id="pinEdit">${p ? "Edit pinned position" : "Set position by hand"}</button>` : "";
+  const set = p || d.name_manual;
+  const btn = admin.on ? `<button class="btn" id="pinEdit">${set ? "Edit name and position" : "Set name or position by hand"}</button>` : "";
   return txt || btn ? `<div class="small pin-line">${txt}${btn}</div>` : "";
+}
+// A node's name in a list: set by hand (marked), announced, or its hash
+function nodeName(n) {
+  if (!n.name) return `<span class="mono">${short(n.identity, 12)}</span>`;
+  if (!n.name_manual) return esc(n.name);
+  const tip = `Name set by hand; ${n.announced_name ? `announced as “${n.announced_name}”` : "it announces no name"}`;
+  return `<span class="by-hand" title="${esc(tip)}">${esc(n.name)}</span>`;
 }
 // The dialog sets a node's or an observer's position: target is
 // { kind: "node" | "observer", id }.
-let pinTarget = null;
+// For a node it also sets a name, and both are optional; target.node is
+// the node's page data then.
+let pinTarget = null, pinHint = null;
 function openPinDialog(d) {
-  showPinDialog({ kind: "node", id: d.identity }, d.pin, (d.dests || []).find((x) => x.lat != null));
+  showPinDialog({ kind: "node", id: d.identity, node: d }, d.pin, (d.dests || []).find((x) => x.lat != null));
 }
 function showPinDialog(target, p, fallback) {
   pinTarget = target;
-  $("#pinHelp").textContent = target.kind === "node"
-    ? "For nodes that do not announce a position. A pinned position replaces the announced one on the map."
+  const node = target.kind === "node" ? target.node : null;
+  $("#pinTitle").textContent = node ? "Name and position set by hand" : "Position set by hand";
+  $("#pinHelp").textContent = node
+    ? "Both are optional. A name set here is shown instead of the announced one, and a position replaces the announced one on the map. Leave a field empty to use what the node announces."
     : "Where this observer's radio is. A position set here replaces any the observer reports.";
-  const src = p || fallback || {};
+  $("#pinNameRow").hidden = !node;
+  if (node) {
+    $("#pinName").value = node.name_manual ? node.name : "";
+    const announced = node.name_manual ? node.announced_name : node.name;
+    $("#pinName").placeholder = announced || "";
+    $("#pinNameHelp").textContent = announced ? `It announces “${announced}”.` : "It announces no name.";
+  }
+  // A node's announced position only centres the map: saving it as a pin
+  // would freeze it. An observer needs a position, so start from the reported one.
+  const src = p || (node ? {} : fallback || {});
+  pinHint = node && !p && fallback ? { lat: fallback.lat, lon: fallback.lon } : null;
+  for (const id of ["#pinLat", "#pinLon"]) $(id).required = !node;
   $("#pinLat").value = src.lat ?? "";
   $("#pinLon").value = src.lon ?? "";
   $("#pinHeight").value = src.height ?? "";
   $("#pinNote").value = p ? p.note || "" : "";
-  $("#pinClear").hidden = !p;
+  $("#pinClear").hidden = !(p || node?.name_manual);
+  $("#pinClear").textContent = node ? "Remove name and position" : "Remove pin";
   $("#pinErr").textContent = "";
   $("#pinDlg").showModal();
-  $("#pinLat").focus();
+  (node ? $("#pinName") : $("#pinLat")).focus();
   pickOpen();
 }
 $("#pinCancel").onclick = () => $("#pinDlg").close();
@@ -1397,7 +1427,7 @@ function pickValue() {
 }
 async function pickOpen() {
   if (!geo.data) { try { geo.data = await api("/api/map"); } catch { /* the map still works without them */ } }
-  const v = pickValue();
+  const v = pickValue() || pinHint;
   const refs = [...(geo.data?.nodes || []), ...(geo.data?.observers || [])];
   let c = v, z = 14;
   if (!c && refs.length) {
@@ -1523,15 +1553,33 @@ async function pinDone(fn) {
 }
 $("#pinForm").onsubmit = (e) => {
   e.preventDefault();
-  const h = $("#pinHeight").value.trim();
-  const body = { lat: Number($("#pinLat").value), lon: Number($("#pinLon").value), note: $("#pinNote").value.trim() };
+  const t = pinTarget, node = t.kind === "node" ? t.node : null;
+  const lat = $("#pinLat").value.trim(), lon = $("#pinLon").value.trim(), h = $("#pinHeight").value.trim();
+  const body = { lat: Number(lat), lon: Number(lon), note: $("#pinNote").value.trim() };
   if (h !== "") body.height = Number(h);
-  pinDone(() => apiWrite("PUT", pinURL(), body));
+  if (!node) return pinDone(() => apiWrite("PUT", pinURL(), body));
+  if ((lat === "") !== (lon === "")) { $("#pinErr").textContent = "Give both latitude and longitude, or neither."; return; }
+  const noPos = lat === "" && (h !== "" || body.note);
+  if (noPos) { $("#pinErr").textContent = "Height and note belong to a position: give latitude and longitude too."; return; }
+  const name = $("#pinName").value.trim();
+  pinDone(async () => {
+    if (name !== (node.name_manual ? node.name : "")) {
+      await apiWrite(name ? "PUT" : "DELETE", `/api/admin/names/${t.id}`, name ? { name } : undefined);
+      reloadFeedNames();
+    }
+    if (lat !== "") await apiWrite("PUT", pinURL(), body);
+    else if (node.pin) await apiWrite("DELETE", pinURL());
+  });
 };
 $("#pinClear").onclick = () => {
-  if (confirm("Remove the position set by hand? It goes back to the announced or reported one, if there is one.")) {
-    pinDone(() => apiWrite("DELETE", pinURL()));
-  }
+  const node = pinTarget.kind === "node" ? pinTarget.node : null;
+  const what = node ? "the name and position set by hand? The node goes back to its announced name and position" :
+    "the position set by hand? It goes back to the reported one";
+  if (!confirm(`Remove ${what}, if there are any.`)) return;
+  pinDone(async () => {
+    if (node?.name_manual) { await apiWrite("DELETE", `/api/admin/names/${pinTarget.id}`); reloadFeedNames(); }
+    if (!node || node.pin) await apiWrite("DELETE", pinURL());
+  });
 };
 
 // ---------- start ----------

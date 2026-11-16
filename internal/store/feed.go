@@ -100,7 +100,7 @@ func (s *Store) PacketFeed(before, after time.Time, hashPrefix string, limit int
 			(SELECT COUNT(*) FROM receptions WHERE packet_id = p.id AND partial > 0),
 			(SELECT MAX(delay_ms) FROM receptions WHERE packet_id = p.id),
 			(SELECT group_concat(id) FROM frame_errors WHERE matched_packet_id = p.id),
-			d.display_name, d.app_name, a.name_hash, a.app_data
+			COALESCE(`+manualName("d.identity_hash")+`, d.display_name), d.app_name, a.name_hash, a.app_data
 		FROM packets p
 		JOIN receptions r ON r.id = (SELECT id FROM receptions WHERE packet_id = p.id
 			ORDER BY partial > 0, t_rx, id LIMIT 1)
@@ -247,7 +247,8 @@ func (s *Store) nameRows(out []PacketRow) {
 		if out[i].Kind == "orphan" && out[i].Dest != "" {
 			b, _ := hex.DecodeString(out[i].Dest)
 			var dn, an sql.NullString
-			s.DB.QueryRow(`SELECT display_name, app_name FROM destinations WHERE hash = ?`, b).Scan(&dn, &an)
+			s.DB.QueryRow(`SELECT COALESCE(`+manualName("identity_hash")+`, display_name), app_name
+				FROM destinations WHERE hash = ?`, b).Scan(&dn, &an)
 			out[i].DestName, out[i].AppName = dn.String, an.String
 		}
 	}

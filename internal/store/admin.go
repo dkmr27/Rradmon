@@ -247,6 +247,51 @@ func (s *Store) SetPin(identHex string, p Pin) error {
 	return err
 }
 
+// NodeNameMax is the longest name that can be set by hand, in characters.
+const NodeNameMax = 64
+
+// manualName is the SQL for a node's name set by hand, given an expression
+// for its identity hash; NULL when none is set.
+func manualName(ident string) string {
+	return `(SELECT name FROM node_names WHERE identity_hash = ` + ident + `)`
+}
+
+// CleanNodeName trims a name and checks it: up to NodeNameMax characters,
+// no control characters. An empty result means no name.
+func CleanNodeName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if len([]rune(name)) > NodeNameMax {
+		return "", fmt.Errorf("store: a name is limited to %d characters", NodeNameMax)
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) || r == 0x2028 || r == 0x2029 {
+			return "", errors.New("store: a name cannot contain control characters")
+		}
+	}
+	return name, nil
+}
+
+// SetNodeName names a node (identity hash, hex) by hand; an empty name
+// removes it, so the announced name shows again.
+func (s *Store) SetNodeName(identHex, name string) error {
+	ident, err := hex.DecodeString(identHex)
+	if err != nil || len(ident) != 16 {
+		return ErrNotFound
+	}
+	name, err = CleanNodeName(name)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		_, err = s.DB.Exec(`DELETE FROM node_names WHERE identity_hash = ?`, ident)
+		return err
+	}
+	_, err = s.DB.Exec(`INSERT INTO node_names (identity_hash, name, set_t) VALUES (?,?,?)
+		ON CONFLICT(identity_hash) DO UPDATE SET name = excluded.name, set_t = excluded.set_t`,
+		ident, name, ms(time.Now()))
+	return err
+}
+
 // ClearPin removes a node's pin.
 func (s *Store) ClearPin(identHex string) error {
 	ident, err := hex.DecodeString(identHex)

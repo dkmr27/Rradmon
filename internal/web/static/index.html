@@ -204,9 +204,13 @@
   <form method="dialog" id="pinForm">
     <h3 id="pinTitle">Position set by hand</h3>
     <p class="muted small" id="pinHelp"></p>
+    <div id="pinNameRow">
+      <label>Name (optional) <input id="pinName" type="text" maxlength="64" autocomplete="off"></label>
+      <p class="muted small" id="pinNameHelp"></p>
+    </div>
     <div class="grid2">
-      <label>Latitude <input id="pinLat" type="number" step="any" min="-90" max="90" required></label>
-      <label>Longitude <input id="pinLon" type="number" step="any" min="-180" max="180" required></label>
+      <label>Latitude <input id="pinLat" type="number" step="any" min="-90" max="90"></label>
+      <label>Longitude <input id="pinLon" type="number" step="any" min="-180" max="180"></label>
       <label>Height, m (optional) <input id="pinHeight" type="number" step="any" min="-500" max="10000"></label>
       <label>Note (optional) <input id="pinNote" type="text" maxlength="200"></label>
     </div>

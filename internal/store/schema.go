@@ -222,4 +222,13 @@ ALTER TABLE observers ADD COLUMN pin_height REAL;
 ALTER TABLE observers ADD COLUMN pin_note TEXT;
 ALTER TABLE observers ADD COLUMN pin_t INTEGER;
 `,
+	// 9: names set by hand by the admin, per node (identity). A name set by
+	// hand is shown instead of the announced one.
+	`
+CREATE TABLE node_names (
+	identity_hash BLOB PRIMARY KEY,
+	name          TEXT NOT NULL,
+	set_t         INTEGER NOT NULL
+);
+`,
 }

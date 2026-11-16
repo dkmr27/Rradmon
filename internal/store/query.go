@@ -144,7 +144,7 @@ func (s *Store) feed(cmp, order string, t0 time.Time, limit int) ([]FeedRow, err
 	rows, err := s.DB.Query(`
 		SELECT 'rx', r.id, p.id, r.t_rx, o.ext_id, r.rssi, r.snr, p.pkt_type, p.dest_type, p.dest_hash,
 			r.hops, r.transport_id, p.data_len, r.frames, r.partial, r.delay_ms, p.repeat_of IS NOT NULL,
-			r.tx_identity, d.display_name, d.app_name, NULL,
+			r.tx_identity, COALESCE(`+manualName("d.identity_hash")+`, d.display_name), d.app_name, NULL,
 			COALESCE(p.proves_unheard, 0), NULL, p.proves_orphan,
 			p.first_seen - (SELECT t FROM frame_errors WHERE id = p.proves_orphan), NULL
 		FROM receptions r JOIN packets p ON p.id = r.packet_id JOIN observers o ON o.id = r.observer_id
@@ -218,7 +218,8 @@ func (s *Store) feed(cmp, order string, t0 time.Time, limit int) ([]FeedRow, err
 	for _, i := range dests {
 		b, _ := hex.DecodeString(out[i].Dest)
 		var dn, an sql.NullString
-		s.DB.QueryRow(`SELECT display_name, app_name FROM destinations WHERE hash = ?`, b).Scan(&dn, &an)
+		s.DB.QueryRow(`SELECT COALESCE(`+manualName("identity_hash")+`, display_name), app_name
+			FROM destinations WHERE hash = ?`, b).Scan(&dn, &an)
 		out[i].DestName, out[i].AppName = dn.String, an.String
 	}
 	for i := range out {
@@ -233,29 +234,34 @@ func (s *Store) feed(cmp, order string, t0 time.Time, limit int) ([]FeedRow, err
 	return out, nil
 }
 
-// identityName picks the best display name among an identity's destinations.
+// identityName is a node's name: set by hand, else the newest announced
+// display name among its destinations.
 func (s *Store) identityName(ident []byte) string {
 	var name sql.NullString
-	s.DB.QueryRow(`SELECT display_name FROM destinations WHERE identity_hash = ? AND display_name IS NOT NULL
-		ORDER BY last_seen DESC LIMIT 1`, ident).Scan(&name)
+	s.DB.QueryRow(`SELECT COALESCE(`+manualName("?1")+`, (SELECT display_name FROM destinations
+		WHERE identity_hash = ?1 AND display_name IS NOT NULL ORDER BY last_seen DESC LIMIT 1))`, ident).Scan(&name)
 	return name.String
 }
 
 // NodeRow is one radio node: an identity that announced destinations and/or
 // was identified as the transmitter of packets.
 type NodeRow struct {
-	Identity     string    `json:"identity"`
-	Name         string    `json:"name"`
-	Apps         []string  `json:"apps"`
-	Destinations int64     `json:"destinations"`
-	Announces    int64     `json:"announces"`
-	MinHops      *int64    `json:"min_hops"`
-	LastSeen     time.Time `json:"last_seen"`
-	HeardDirect  int64     `json:"heard_direct"` // receptions attributed to it
-	LastRSSI     *float64  `json:"last_rssi"`
-	LastSNR      *float64  `json:"last_snr"`
-	AvgRSSI24h   *float64  `json:"avg_rssi_24h"`
-	AvgSNR24h    *float64  `json:"avg_snr_24h"`
+	Identity string `json:"identity"`
+	Name     string `json:"name"` // set by hand, else announced
+	// NameManual says Name was set by hand; AnnouncedName is then what the
+	// node announces (empty if nothing)
+	NameManual    bool      `json:"name_manual,omitempty"`
+	AnnouncedName string    `json:"announced_name,omitempty"`
+	Apps          []string  `json:"apps"`
+	Destinations  int64     `json:"destinations"`
+	Announces     int64     `json:"announces"`
+	MinHops       *int64    `json:"min_hops"`
+	LastSeen      time.Time `json:"last_seen"`
+	HeardDirect   int64     `json:"heard_direct"` // receptions attributed to it
+	LastRSSI      *float64  `json:"last_rssi"`
+	LastSNR       *float64  `json:"last_snr"`
+	AvgRSSI24h    *float64  `json:"avg_rssi_24h"`
+	AvgSNR24h     *float64  `json:"avg_snr_24h"`
 	// Distinct announces from this identity in the last 24 h (relayed copies
 	// count once); the page shows it as a rate per hour
 	Announces24h int64 `json:"announces_24h"`
@@ -277,6 +283,7 @@ func (s *Store) Nodes(q string, now time.Time) ([]NodeRow, error) {
 		)
 		SELECT ids.ident,
 			(SELECT display_name FROM destinations WHERE identity_hash = ids.ident AND display_name IS NOT NULL ORDER BY last_seen DESC LIMIT 1),
+			`+manualName("ids.ident")+`,
 			(SELECT group_concat(COALESCE(app_name, hex(name_hash)), '|') FROM destinations WHERE identity_hash = ids.ident),
 			(SELECT COUNT(*) FROM destinations WHERE identity_hash = ids.ident),
 			(SELECT COALESCE(SUM(announce_count),0) FROM destinations WHERE identity_hash = ids.ident),
@@ -294,7 +301,7 @@ func (s *Store) Nodes(q string, now time.Time) ([]NodeRow, error) {
 				WHERE r.tx_identity = ids.ident AND r.t_rx >= ? AND r.rssi IS NOT NULL ORDER BY r.rssi DESC LIMIT 1),
 			(SELECT group_concat(lower(hex(hash)) || ' ' || lower(COALESCE(display_name,'')) || ' ' || lower(COALESCE(app_name,'')), ' ')
 				FROM destinations WHERE identity_hash = ids.ident)
-		FROM ids ORDER BY 7 DESC`, day, day, day, day, day)
+		FROM ids ORDER BY 8 DESC`, day, day, day, day, day)
 	if err != nil {
 		return nil, err
 	}
@@ -305,20 +312,25 @@ func (s *Store) Nodes(q string, now time.Time) ([]NodeRow, error) {
 			n          NodeRow
 			ident      []byte
 			name, apps sql.NullString
+			manual     sql.NullString
 			search     sql.NullString
 			bestObs    sql.NullString
 			last       int64
 		)
-		if err := rows.Scan(&ident, &name, &apps, &n.Destinations, &n.Announces, &n.MinHops, &last,
+		if err := rows.Scan(&ident, &name, &manual, &apps, &n.Destinations, &n.Announces, &n.MinHops, &last,
 			&n.HeardDirect, &n.LastRSSI, &n.LastSNR, &n.AvgRSSI24h, &n.AvgSNR24h, &n.Announces24h, &n.BestRSSI24h, &bestObs, &search); err != nil {
 			return nil, err
 		}
 		n.Identity, n.Name, n.LastSeen = hx(ident), name.String, fromMs(last)
+		if manual.Valid {
+			n.Name, n.NameManual, n.AnnouncedName = manual.String, true, name.String
+		}
 		n.BestObserver24h = bestObs.String
 		if apps.String != "" {
 			n.Apps = strings.Split(apps.String, "|")
 		}
-		if q != "" && !strings.Contains(n.Identity, q) && !strings.Contains(search.String, q) {
+		if q != "" && !strings.Contains(n.Identity, q) && !strings.Contains(search.String, q) &&
+			!strings.Contains(strings.ToLower(manual.String), q) {
 			continue
 		}
 		out = append(out, n)

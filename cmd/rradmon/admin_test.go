@@ -156,6 +156,24 @@ func TestAdminFlow(t *testing.T) {
 		t.Errorf("clear pin: %d", code)
 	}
 
+	// Name it by hand; the node list shows the name, and the map the pin
+	// had no effect on it
+	if code, _ := call(t, c, "PUT", u+"/api/admin/names/"+ident, csrf, map[string]any{"name": "rnsd on the PC"}, nil); code != 200 {
+		t.Fatalf("set name: %d", code)
+	}
+	if code, _ := call(t, c, "PUT", u+"/api/admin/names/"+ident, csrf, map[string]any{"name": "badname"}, nil); code != 400 {
+		t.Errorf("control character in name: %d, want 400", code)
+	}
+	if nodes, _ := st.Nodes("rnsd on the pc", time.Now()); len(nodes) != 1 || nodes[0].Name != "rnsd on the PC" || !nodes[0].NameManual {
+		t.Errorf("named node: %+v", nodes)
+	}
+	if code, _ := call(t, c, "DELETE", u+"/api/admin/names/"+ident, csrf, nil, nil); code != 200 {
+		t.Errorf("clear name: %d", code)
+	}
+	if nodes, _ := st.Nodes("rnsd on the pc", time.Now()); len(nodes) != 0 {
+		t.Errorf("name still there after clearing: %+v", nodes)
+	}
+
 	// Strip payloads keeps announces
 	code, out = call(t, c, "POST", u+"/api/admin/strip-payloads", csrf, nil, nil)
 	var left int
@@ -168,6 +186,9 @@ func TestAdminFlow(t *testing.T) {
 	call(t, c, "POST", u+"/api/logout", "", nil, nil)
 	if code, _ := call(t, c, "PUT", u+"/api/admin/settings", csrf, change, nil); code != 401 {
 		t.Errorf("after logout: %d, want 401", code)
+	}
+	if code, _ := call(t, c, "PUT", u+"/api/admin/names/"+ident, csrf, map[string]any{"name": "x"}, nil); code != 401 {
+		t.Errorf("name after logout: %d, want 401", code)
 	}
 }
 

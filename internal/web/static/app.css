@@ -343,3 +343,6 @@ button.hash { white-space: nowrap; font-size: 12px; }
 .pick-pin::before { content: ""; position: absolute; inset: 0; border-radius: 50% 50% 50% 0; transform: rotate(-45deg);
   background: var(--bad); border: 2px solid var(--surface); box-shadow: 0 1px 3px rgb(0 0 0 / .4); }
 .pin-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+#pinNameRow { margin-bottom: 10px; }
+#pinNameRow p { margin: 4px 0 0; }
+.by-hand { border-bottom: 1px dotted var(--text-3); }

@@ -57,6 +57,31 @@ func (s *Server) adminSetPin(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, map[string]bool{"ok": err == nil}, err)
 }
 
+// adminSetName names a node by hand: {"name": "..."}; an empty name removes it.
+func (s *Server) adminSetName(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	err := s.st.SetNodeName(r.PathValue("id"), body.Name)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err == nil {
+		s.log.Info("node name set by admin", "node", r.PathValue("id"))
+	}
+	s.writeJSON(w, map[string]bool{"ok": err == nil}, err)
+}
+
+func (s *Server) adminClearName(w http.ResponseWriter, r *http.Request) {
+	err := s.st.SetNodeName(r.PathValue("id"), "")
+	s.writeJSON(w, map[string]bool{"ok": err == nil}, err)
+}
+
 func (s *Server) adminClearPin(w http.ResponseWriter, r *http.Request) {
 	err := s.st.ClearPin(r.PathValue("id"))
 	s.writeJSON(w, map[string]bool{"ok": err == nil}, err)
