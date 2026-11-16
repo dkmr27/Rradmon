@@ -12,7 +12,7 @@ receiver heard which node and how well.
 
 Rradmon only listens. It never transmits on the radio.
 
-Status: early (0.2.0). It runs well on the author's bench; expect rough edges.
+Status: early (0.3.0). It runs well on the author's bench; expect rough edges.
 
 ## What you see
 
@@ -140,9 +140,9 @@ rradmon run -mqtt tcp://192.168.1.10:1883 -mqtt-user rradmon -mqtt-pass-file bro
 - Observers send a channel report (noise floor and utilisation, averaged)
   once a minute. `-chan-interval 5m` sends one every 5 minutes instead
   (1m to 10m); `run` stores its own RNode's reports the same way.
-- Update the Rradmon server before its observers: observers newer than 0.2.0
-  no longer repeat the radio settings in every frame (the topic carries
-  them), and a 0.2.0 server drops such frames.
+- Update the Rradmon server before its observers: from 0.3.0, observers no
+  longer repeat the radio settings in every frame (the topic carries them),
+  and a 0.2.0 server drops such frames.
 - `-mqtt-allow obs-a,obs-b` accepts only the listed observers.
 - `-local <observer id>` makes an MQTT observer the "local" one shown on the
   Local tab, for a server that has no RNode of its own.
