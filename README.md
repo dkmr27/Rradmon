@@ -134,6 +134,12 @@ rradmon run -mqtt tcp://192.168.1.10:1883 -mqtt-user rradmon -mqtt-pass-file bro
 - Put the broker password in a file (`-mqtt-pass-file`) or the
   `RRADMON_MQTT_PASSWORD` environment variable, never in the command line,
   where other users of the machine can see it.
+- Observers send a channel report (noise floor and utilisation, averaged)
+  once a minute. `-chan-interval 5m` sends one every 5 minutes instead
+  (1m to 10m); `run` stores its own RNode's reports the same way.
+- Update the Rradmon server before its observers: observers newer than 0.2.0
+  no longer repeat the radio settings in every frame (the topic carries
+  them), and a 0.2.0 server drops such frames.
 - `-mqtt-allow obs-a,obs-b` accepts only the listed observers.
 - `-local <observer id>` makes an MQTT observer the "local" one shown on the
   Local tab, for a server that has no RNode of its own.

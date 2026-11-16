@@ -43,7 +43,11 @@ func runRun(args []string) error {
 	lon := fs.Float64("lon", 0, "position of the local RNode (optional)")
 	broker := brokerFlags(fs)
 	allow := fs.String("mqtt-allow", "", "comma-separated observer ids to accept (default all)")
+	chanEvery := chanIntervalFlag(fs)
 	fs.Parse(args)
+	if err := checkChanInterval(*chanEvery); err != nil {
+		return err
+	}
 	if *port == "" && broker.URL == "" {
 		fs.Usage()
 		return errors.New("run: give -port, -mqtt, or both")
@@ -161,6 +165,7 @@ func runRun(args []string) error {
 	}
 	doPurge()
 
+	avg := rnode.ChannelAverager{Interval: *chanEvery}
 	for {
 		select {
 		case <-ctx.Done():
@@ -186,6 +191,10 @@ func runRun(args []string) error {
 					return err
 				}
 			case rnode.ChannelStats:
+				e, ok := avg.Add(e)
+				if !ok {
+					continue
+				}
 				if err := in.Channel(obs, src, store.ChannelStats{T: e.T, AirtimeShort: e.AirtimeShort,
 					AirtimeLong: e.AirtimeLong, UtilShort: e.UtilShort, UtilLong: e.UtilLong,
 					RSSI: e.RSSI, NoiseFloor: e.NoiseFloor, Interference: e.Interference}); err != nil {
@@ -244,6 +253,7 @@ func importCapture(st *store.Store, path string, quiet bool) (int, error) {
 		raw  = true
 		n    int
 		last time.Time
+		avg  = rnode.ChannelAverager{Interval: rnode.ChannelIntervalDefault}
 	)
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64*1024), 1<<20)
@@ -302,9 +312,15 @@ func importCapture(st *store.Store, path string, quiet bool) (int, error) {
 			if rec.RSSI != nil {
 				rssi = *rec.RSSI
 			}
-			if err := in.Channel(obs, src, store.ChannelStats{T: t, AirtimeShort: rec.AirtimeShort,
+			c, ok := avg.Add(rnode.ChannelStats{T: t, AirtimeShort: rec.AirtimeShort,
 				AirtimeLong: rec.AirtimeLong, UtilShort: rec.UtilShort, UtilLong: rec.UtilLong,
-				RSSI: rssi, NoiseFloor: rec.NoiseFloor, Interference: rec.Interference}); err != nil {
+				RSSI: rssi, NoiseFloor: rec.NoiseFloor, Interference: rec.Interference})
+			if !ok {
+				break
+			}
+			if err := in.Channel(obs, src, store.ChannelStats{T: c.T, AirtimeShort: c.AirtimeShort,
+				AirtimeLong: c.AirtimeLong, UtilShort: c.UtilShort, UtilLong: c.UtilLong,
+				RSSI: c.RSSI, NoiseFloor: c.NoiseFloor, Interference: c.Interference}); err != nil {
 				return n, err
 			}
 		}

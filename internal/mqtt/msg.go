@@ -30,14 +30,16 @@ func (r Radio) NetworkID() string {
 
 // Rx is one received LoRa frame (topic …/rx).
 type Rx struct {
-	V        int      `json:"v"`
-	Observer string   `json:"observer"`
-	Seq      uint64   `json:"seq"`
-	TObs     string   `json:"t_obs"` // RFC 3339, the observer's clock
-	Radio    Radio    `json:"radio"`
-	RSSI     *float32 `json:"rssi,omitempty"`
-	SNR      *float32 `json:"snr,omitempty"`
-	Len      int      `json:"len"`
+	V        int    `json:"v"`
+	Observer string `json:"observer"`
+	Seq      uint64 `json:"seq"`
+	TObs     string `json:"t_obs"` // RFC 3339, the observer's clock
+	// Radio was sent by observers up to 0.2.0; the topic's network and the
+	// status say the same. When present it must match the topic.
+	Radio *Radio   `json:"radio,omitempty"`
+	RSSI  *float32 `json:"rssi,omitempty"`
+	SNR   *float32 `json:"snr,omitempty"`
+	Len   int      `json:"len"`
 	// Frame is the raw LoRa frame including the RNode header byte (Raw
 	// true), or a whole Reticulum packet from an RNode in normal mode.
 	Frame       []byte `json:"frame"` // base64 in JSON

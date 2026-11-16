@@ -193,7 +193,7 @@ func (s *Subscriber) handle(topic string, payload []byte, now time.Time) {
 			bad(err)
 			return
 		}
-		if network != m.Radio.NetworkID() {
+		if m.Radio != nil && network != m.Radio.NetworkID() {
 			bad(errNetwork)
 			return
 		}

@@ -14,7 +14,6 @@ type Publisher struct {
 	c       paho.Client
 	prefix  string
 	obs     string
-	radio   Radio
 	network string
 	log     *slog.Logger
 	started time.Time
@@ -37,7 +36,7 @@ func NewPublisher(cfg BrokerConfig, observer string, radio Radio, status Status,
 	if cfg.ClientID == "" {
 		cfg.ClientID = "rradmon-obs-" + observer
 	}
-	p := &Publisher{prefix: cfg.prefix(), obs: observer, radio: radio, network: radio.NetworkID(), log: log, started: time.Now()}
+	p := &Publisher{prefix: cfg.prefix(), obs: observer, network: radio.NetworkID(), log: log, started: time.Now()}
 	status.V, status.Observer, status.Radio = Version, observer, &radio
 	p.status = status
 
@@ -82,7 +81,7 @@ func (p *Publisher) Rx(t time.Time, rssi, snr float32, hasSignal bool, frame []b
 	seq := p.seq
 	p.mu.Unlock()
 	m := Rx{V: Version, Observer: p.obs, Seq: seq, TObs: t.UTC().Format(time.RFC3339Nano),
-		Radio: p.radio, Len: len(frame), Frame: frame}
+		Len: len(frame), Frame: frame}
 	if hasSignal {
 		m.RSSI, m.SNR = &rssi, &snr
 	}

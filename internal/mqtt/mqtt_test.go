@@ -37,7 +37,7 @@ func newSub(h Handler, allow ...string) *Subscriber {
 func rxMsg(obs string, seq uint64, frame []byte) []byte {
 	rssi, snr := float32(-90), float32(8.5)
 	b, _ := json.Marshal(Rx{V: 1, Observer: obs, Seq: seq, TObs: now.Format(time.RFC3339Nano),
-		Radio: radio, RSSI: &rssi, SNR: &snr, Len: len(frame), Frame: frame})
+		Radio: &radio, RSSI: &rssi, SNR: &snr, Len: len(frame), Frame: frame})
 	return b
 }
 
@@ -63,6 +63,20 @@ func TestAcceptsValidRx(t *testing.T) {
 	s.handle(topic("obs-a", "rx"), rxMsg("obs-a", 1, []byte{0x30, 0x00, 0x00, 1, 2, 3}), now)
 	if len(rec.rx) != 1 || *rec.rx[0].RSSI != -90 || rec.rx[0].Frame[0] != 0x30 {
 		t.Fatalf("got %+v", rec.rx)
+	}
+}
+
+// Observers after 0.2.0 leave the radio out of rx: the topic says it.
+func TestAcceptsRxWithoutRadio(t *testing.T) {
+	rec := &recorder{}
+	s := newSub(rec)
+	var m map[string]any
+	json.Unmarshal(rxMsg("obs-a", 1, []byte{0x30, 0x00, 0x00, 1, 2, 3}), &m)
+	delete(m, "radio")
+	b, _ := json.Marshal(m)
+	s.handle(topic("obs-a", "rx"), b, now)
+	if len(rec.rx) != 1 {
+		t.Fatal("rx without radio rejected")
 	}
 }
 
@@ -128,7 +142,7 @@ func TestSeqGaps(t *testing.T) {
 }
 
 func TestImplausibleObserverTime(t *testing.T) {
-	m := Rx{V: 1, Observer: "o", Radio: radio, Frame: []byte{1, 2}, TObs: now.Add(-48 * time.Hour).Format(time.RFC3339)}
+	m := Rx{V: 1, Observer: "o", Radio: &radio, Frame: []byte{1, 2}, TObs: now.Add(-48 * time.Hour).Format(time.RFC3339)}
 	tObs, err := m.Validate("o", now)
 	if err != nil || !tObs.IsZero() {
 		t.Errorf("tObs %v err %v", tObs, err)

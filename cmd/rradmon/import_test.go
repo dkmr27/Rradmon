@@ -46,7 +46,7 @@ func TestImportCorpus1(t *testing.T) {
 		{"destinations", `SELECT COUNT(*) FROM destinations`, 3},
 		{"split packets with frame hashes", `SELECT COUNT(*) FROM packets WHERE h1 IS NOT NULL AND h2 IS NOT NULL`, 5},
 		{"frame errors", `SELECT COUNT(*) FROM frame_errors`, 0},
-		{"channel reports", `SELECT COUNT(*) FROM channel_stats`, 318},
+		{"channel reports (318 averaged per minute)", `SELECT COUNT(*) FROM channel_stats`, 5},
 		{"NomadNet name", `SELECT COUNT(*) FROM destinations WHERE display_name = 'Testing-Rrptr'`, 1},
 	}
 	for _, c := range checks {

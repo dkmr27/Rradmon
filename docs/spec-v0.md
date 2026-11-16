@@ -270,7 +270,6 @@ reassembly so every observer behaves the same.
   "observer": "obs-7f3a2c",
   "seq": 18233,
   "t_obs": "2026-11-12T03:14:15.926Z",
-  "radio": {"freq_hz": 925875000, "bw_hz": 250000, "sf": 9, "cr": 5, "sync": 18},
   "rssi": -97.0,
   "snr": 6.25,
   "len": 143,
@@ -291,11 +290,22 @@ reassembly so every observer behaves the same.
   reassembled, so a stripped message must carry a whole packet's hash instead
   (defined when republishing is built).
 - `observer_key`/`sig` are reserved; v1 servers ignore them.
+- No radio settings: the topic's `network_id` and the retained status carry
+  them. Observers up to Rradmon 0.2.0 also sent
+  `"radio": {"freq_hz": …, "bw_hz": …, "sf": …, "cr": …, "sync": …}`; servers
+  still accept it and check it against the topic, but a 0.2.0 server rejects
+  `rx` without it, so update servers before observers.
 
 `status` payload: `{"v":1,"observer":"…","online":true,"fw":"…","radio":{…},"lat":…,"lon":…,"uptime_s":…}`;
 last-will publishes `{"v":1,"observer":"…","online":false}` retained.
 
-`chan` payload: the `CMD_STAT_CHTM` fields decoded (percentages and dBm).
+`chan` payload: the `CMD_STAT_CHTM` fields decoded (percentages and dBm),
+one report per interval (default 1 minute, settable from 1 to 10 minutes:
+`-chan-interval` for `rradmon observe` and `run`, `RROBS_CHAN_INTERVAL_S` for
+Rrobs). An RNode reports about once a second; Rradmon averages `util_s` and
+`noise_floor` over the interval, `interference` is the strongest seen, and
+the other fields are the last report's. Rrobs measures `util_s` over the last
+minute itself. A `run` with a local RNode stores the same averaged reports.
 
 Validation on ingest: `v` known, `len` ≤ 255 (one frame), `rssi` in −160..0,
 `snr` in −32..32, `t_obs` within ±1 day of `t_rx`, rate limit per observer.
@@ -306,7 +316,7 @@ As implemented (`internal/mqtt`, 2026-11-12):
   Reticulum packet from an RNode in normal mode (then up to 508 bytes);
   absent means a raw frame with the RNode header byte (2–255 bytes).
 - Observers never send `stripped` frames; the server rejects them.
-- The topic's network segment must equal the message's radio
+- When an `rx` carries `radio`, the topic's network segment must equal it
   (`<freq>-<bw>-<sf>-<cr>`), and the topic's observer must equal `observer`
   (`[A-Za-z0-9._-]{1,64}`). One radio network per server for now; others
   are logged and ignored.

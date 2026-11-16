@@ -31,6 +31,19 @@ func brokerFlags(fs *flag.FlagSet) *mqtt.BrokerConfig {
 	return c
 }
 
+// chanIntervalFlag is how often channel reports (noise floor, utilisation)
+// are stored or published.
+func chanIntervalFlag(fs *flag.FlagSet) *time.Duration {
+	return fs.Duration("chan-interval", rnode.ChannelIntervalDefault, "channel report (noise floor, utilisation) interval, 1m to 10m")
+}
+
+func checkChanInterval(d time.Duration) error {
+	if d < rnode.ChannelIntervalMin || d > rnode.ChannelIntervalMax {
+		return fmt.Errorf("-chan-interval %v: must be from 1m to 10m", d)
+	}
+	return nil
+}
+
 func defaultObserverID(port string) string {
 	h, _ := os.Hostname()
 	id := strings.ToLower("obs-" + h + "-" + strings.TrimPrefix(port, "/dev/"))
@@ -64,7 +77,11 @@ func runObserve(args []string) error {
 	dur := fs.Duration("for", 0, "stop after this long (0 = until Ctrl+C)")
 	quiet := fs.Bool("quiet", false, "do not print each frame")
 	broker := brokerFlags(fs)
+	chanEvery := chanIntervalFlag(fs)
 	fs.Parse(args)
+	if err := checkChanInterval(*chanEvery); err != nil {
+		return err
+	}
 	if (*port == "") == (*replay == "") {
 		fs.Usage()
 		return errors.New("observe: give exactly one of -port or -replay")
@@ -129,6 +146,7 @@ func runObserve(args []string) error {
 	fmt.Fprintf(os.Stderr, "Observer %s: %s on %s -> %s (%s/%s/%s/…). Ctrl+C to stop.\n",
 		*id, status.Firmware, *port, broker.Redacted(), strings.TrimSuffix(broker.Prefix, "/"), radio.NetworkID(), *id)
 
+	avg := rnode.ChannelAverager{Interval: *chanEvery}
 	heartbeat := time.NewTicker(time.Minute)
 	defer heartbeat.Stop()
 	var frames int
@@ -155,6 +173,10 @@ func runObserve(args []string) error {
 					fmt.Println(describeFrame(e))
 				}
 			case rnode.ChannelStats:
+				e, ok := avg.Add(e)
+				if !ok {
+					continue
+				}
 				if err := pub.Chan(mqtt.Chan{TObs: e.T.UTC().Format(time.RFC3339Nano),
 					AirtimeShort: e.AirtimeShort, AirtimeLong: e.AirtimeLong, UtilShort: e.UtilShort,
 					UtilLong: e.UtilLong, RSSI: e.RSSI, NoiseFloor: e.NoiseFloor, Interference: e.Interference}); err != nil {
