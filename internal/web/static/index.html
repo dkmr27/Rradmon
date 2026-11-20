@@ -234,6 +234,20 @@
   </form>
 </dialog>
 
+<dialog id="delNodeDlg" class="dlg">
+  <form method="dialog" id="delNodeForm">
+    <h3 id="delNodeTitle">Delete node</h3>
+    <p class="small" id="delNodeText"></p>
+    <label class="chk"><input type="checkbox" id="delNodePackets"> Also delete the packets it sent and its announces</label>
+    <p class="muted small" id="delNodePacketsHelp"></p>
+    <p class="small err" id="delNodeErr" role="alert"></p>
+    <div class="form-row end">
+      <button type="button" class="btn" id="delNodeCancel">Cancel</button>
+      <button type="submit" class="btn danger">Delete node</button>
+    </div>
+  </form>
+</dialog>
+
 <div class="tip" id="tip" hidden></div>
 <script src="app.js"></script>
 </body>

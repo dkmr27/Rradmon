@@ -575,6 +575,8 @@ function renderNodePage(d) {
   $$("table.per-obs tr[data-obs]", page).forEach((tr) => (tr.onclick = () => choose(tr.dataset.obs)));
   const pinBtn = $("#pinEdit", page);
   if (pinBtn) pinBtn.onclick = () => openPinDialog(d);
+  const delBtn = $("#nodeDelete", page);
+  if (delBtn) delBtn.onclick = () => openDeleteNode(d);
   $$("[data-map]", page).forEach((b) => (b.onclick = async () => {
     showTab("map");
     await loadMap();
@@ -1367,9 +1369,48 @@ function pinLine(d) {
        <button class="link" data-map="1" data-lat="${p.lat}" data-lon="${p.lon}">show on map</button>`
     : "";
   const set = p || d.name_manual;
-  const btn = admin.on ? `<button class="btn" id="pinEdit">${set ? "Edit name and position" : "Set name or position by hand"}</button>` : "";
+  const btn = admin.on ? `<button class="btn" id="pinEdit">${set ? "Edit name and position" : "Set name or position by hand"}</button>
+    <button class="btn danger" id="nodeDelete" title="Delete this node from the database">Delete node</button>` : "";
   return txt || btn ? `<div class="small pin-line">${txt}${btn}</div>` : "";
 }
+// Deleting a node: its destinations, signal history and what was set by
+// hand, and optionally the packets it sent
+let delNode = null;
+function openDeleteNode(d) {
+  delNode = d;
+  const name = d.name || short(d.identity, 12);
+  const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  $("#delNodeTitle").textContent = `Delete ${name}?`;
+  $("#delNodeText").textContent = `This removes its ${plural(d.destinations, "destination")}, its signal history, ` +
+    `and any name or position set by hand. The ${plural(d.heard_direct, "frame")} heard from it stay in the live feed, ` +
+    "without its name. If it is heard again it shows up again. This cannot be undone.";
+  $("#delNodePackets").checked = false;
+  $("#delNodePacketsHelp").textContent = "Deletes them from the live feed too, with all its announces " +
+    "(also the copies other nodes relayed). Packets others sent to it are kept.";
+  $("#delNodeErr").textContent = "";
+  $("#delNodeDlg").showModal();
+}
+$("#delNodeCancel").onclick = () => $("#delNodeDlg").close();
+$("#delNodeForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const d = delNode;
+  const packets = $("#delNodePackets").checked;
+  try {
+    await apiWrite("DELETE", `/api/admin/nodes/${d.identity}${packets ? "?packets=1" : ""}`);
+  } catch (ex) {
+    $("#delNodeErr").textContent = `Could not delete it: ${ex.message}`;
+    return;
+  }
+  $("#delNodeDlg").close();
+  currentNode = null;
+  geo.data = null;
+  reloadFeedNames();
+  loadSummary().catch(console.error);
+  // To the node list, wherever the node page was opened from
+  returnTab = "nodes";
+  location.hash = "nodes";
+  loadNodes().catch(console.error);
+};
 // A node's name in a list: set by hand (marked), announced, or its hash
 function nodeName(n) {
   if (!n.name) return `<span class="mono">${short(n.identity, 12)}</span>`;

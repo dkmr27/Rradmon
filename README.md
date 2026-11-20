@@ -23,7 +23,11 @@ Status: early (0.3.0). It runs well on the author's bench; expect rough edges.
   rates and best signal. A node page has signal history per observer and
   announce history. The admin can give any node a name and a position by hand
   (for nodes that announce none, or a better one); they are used everywhere
-  instead of the announced ones, and the node page shows both.
+  instead of the announced ones, and the node page shows both. The admin can
+  also delete a node (Delete node on its page): its destinations, signal
+  history and what was set by hand go, and the frames heard from it stay in
+  the live feed unless "Also delete the packets it sent" is ticked. A node
+  that is heard again shows up again.
 - **Observers**: each receiver with its noise floor and channel utilisation
   over time, and the nodes it hears directly.
 - **Map**: nodes that publish a position (Reticulum interface discovery), and
@@ -155,8 +159,8 @@ in [docs/spec-v0.md](docs/spec-v0.md), section 5.
 ## Admin and settings
 
 Anyone who can open the web UI can view it. Changes need the admin password:
-the Settings tab, names and positions set by hand, and removing stored
-payloads. Set the
+the Settings tab, names and positions set by hand, deleting nodes and
+observers, and removing stored payloads. Set the
 password from the command line on the machine that runs Rradmon:
 
 ```

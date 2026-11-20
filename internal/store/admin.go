@@ -292,6 +292,68 @@ func (s *Store) SetNodeName(identHex, name string) error {
 	return err
 }
 
+// DeletedNode says what DeleteNode removed.
+type DeletedNode struct {
+	Destinations int64 `json:"destinations"`
+	Packets      int64 `json:"packets"` // only with its packets
+}
+
+// DeleteNode deletes a node (identity hash, hex): its destinations, its
+// hourly signal stats, its name and position set by hand, and its link to
+// the frames heard from it. Those frames stay in the feed, without its name,
+// unless withPackets is set: then the packets it sent and all its announces
+// (also the copies others relayed) go too, with their receptions. Packets
+// others sent to it are kept. A node that is heard again comes back.
+func (s *Store) DeleteNode(identHex string, withPackets bool) (DeletedNode, error) {
+	var out DeletedNode
+	ident, err := hex.DecodeString(identHex)
+	if err != nil || len(ident) != 16 {
+		return out, ErrNotFound
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return out, err
+	}
+	defer tx.Rollback()
+	var known bool
+	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM destinations WHERE identity_hash = ?1)
+		OR EXISTS (SELECT 1 FROM receptions WHERE tx_identity = ?1)
+		OR EXISTS (SELECT 1 FROM node_pins WHERE identity_hash = ?1)
+		OR EXISTS (SELECT 1 FROM node_names WHERE identity_hash = ?1)`, ident).Scan(&known); err != nil {
+		return out, err
+	}
+	if !known {
+		return out, ErrNotFound
+	}
+	if withPackets {
+		// Before the frames are unlinked from it below. Receptions and
+		// announces go with their packets (ON DELETE CASCADE).
+		res, err := tx.Exec(`DELETE FROM packets WHERE tx_identity = ?1
+			OR id IN (SELECT packet_id FROM announces WHERE identity_hash = ?1)`, ident)
+		if err != nil {
+			return out, err
+		}
+		out.Packets, _ = res.RowsAffected()
+	}
+	res, err := tx.Exec(`DELETE FROM destinations WHERE identity_hash = ?`, ident)
+	if err != nil {
+		return out, err
+	}
+	out.Destinations, _ = res.RowsAffected()
+	for _, q := range []string{
+		`UPDATE receptions SET tx_identity = NULL WHERE tx_identity = ?`,
+		`UPDATE packets SET tx_identity = NULL WHERE tx_identity = ?`,
+		`DELETE FROM node_stats_hourly WHERE tx_identity = ?`,
+		`DELETE FROM node_pins WHERE identity_hash = ?`,
+		`DELETE FROM node_names WHERE identity_hash = ?`,
+	} {
+		if _, err := tx.Exec(q, ident); err != nil {
+			return out, err
+		}
+	}
+	return out, tx.Commit()
+}
+
 // ClearPin removes a node's pin.
 func (s *Store) ClearPin(identHex string) error {
 	ident, err := hex.DecodeString(identHex)

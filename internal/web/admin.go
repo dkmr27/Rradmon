@@ -129,6 +129,18 @@ func (s *Server) adminForgetObserver(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, map[string]bool{"ok": err == nil}, err)
 }
 
+// adminDeleteNode deletes a node; ?packets=1 also deletes the packets it sent.
+func (s *Server) adminDeleteNode(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	withPackets := r.URL.Query().Get("packets") == "1"
+	res, err := s.st.DeleteNode(id, withPackets)
+	if err == nil {
+		s.log.Info("node deleted by admin", "node", id, "destinations", res.Destinations,
+			"with_packets", withPackets, "packets", res.Packets)
+	}
+	s.writeJSON(w, res, err)
+}
+
 func (s *Server) adminStripPayloads(w http.ResponseWriter, r *http.Request) {
 	n, err := s.st.StripPayloads()
 	if err == nil {

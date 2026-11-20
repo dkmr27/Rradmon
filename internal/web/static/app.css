@@ -320,6 +320,8 @@ button.hash { white-space: nowrap; font-size: 12px; }
   font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
 }
 .dlg label input { display: block; width: 100%; box-sizing: border-box; margin-top: 3px; }
+.dlg label.chk { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); }
+.dlg label.chk input { display: inline; width: auto; margin: 0; }
 #loginPw { display: block; width: 100%; box-sizing: border-box; margin-top: 3px; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 @media (max-width: 480px) { .grid2 { grid-template-columns: 1fr; } }

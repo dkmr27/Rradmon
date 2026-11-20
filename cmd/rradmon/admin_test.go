@@ -174,6 +174,26 @@ func TestAdminFlow(t *testing.T) {
 		t.Errorf("name still there after clearing: %+v", nodes)
 	}
 
+	// Deleting a node: unknown and malformed ones are not found; a known
+	// one goes (TestDeleteNode checks what goes with it)
+	if code, _ := call(t, c, "DELETE", u+"/api/admin/nodes/00000000000000000000000000000000", csrf, nil, nil); code != 404 {
+		t.Errorf("delete unknown node: %d, want 404", code)
+	}
+	if code, _ := call(t, c, "DELETE", u+"/api/admin/nodes/xyz", csrf, nil, nil); code != 404 {
+		t.Errorf("delete malformed node id: %d, want 404", code)
+	}
+	if code, _ := call(t, c, "DELETE", u+"/api/admin/nodes/"+ident, "", nil, nil); code != 403 && code != 401 {
+		t.Errorf("delete node without the CSRF header: %d, want refused", code)
+	}
+	code, out = call(t, c, "DELETE", u+"/api/admin/nodes/"+ident, csrf, nil, nil)
+	// This node was only heard sending: it has no destinations
+	if _, ok := out["destinations"]; code != 200 || !ok {
+		t.Errorf("delete node: %d %v", code, out)
+	}
+	if n, err := st.Node(ident, time.Now()); err == nil {
+		t.Errorf("deleted node still there: %+v", n)
+	}
+
 	// Strip payloads keeps announces
 	code, out = call(t, c, "POST", u+"/api/admin/strip-payloads", csrf, nil, nil)
 	var left int
@@ -189,6 +209,9 @@ func TestAdminFlow(t *testing.T) {
 	}
 	if code, _ := call(t, c, "PUT", u+"/api/admin/names/"+ident, csrf, map[string]any{"name": "x"}, nil); code != 401 {
 		t.Errorf("name after logout: %d, want 401", code)
+	}
+	if code, _ := call(t, c, "DELETE", u+"/api/admin/nodes/"+ident, csrf, nil, nil); code != 401 {
+		t.Errorf("delete node after logout: %d, want 401", code)
 	}
 }
 
