@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dkmr27/Rradmon/internal/store"
 	"github.com/dkmr27/Rradmon/internal/web"
@@ -16,6 +17,12 @@ func webFixture(t *testing.T) *httptest.Server {
 	t.Helper()
 	st := openTestStore(t)
 	if _, err := importCapture(st, "../../testdata/rig-corpus1.jsonl", true); err != nil {
+		t.Fatal(err)
+	}
+	// The node page shows the last 7 days of signal, and the capture is from
+	// 2026-11-12: move the receptions so the newest was an hour ago
+	if _, err := st.DB.Exec(`UPDATE receptions SET t_rx = t_rx + (?1 - (SELECT MAX(t_rx) FROM receptions))`,
+		time.Now().Add(-time.Hour).UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	ws := web.New(st, nil)
