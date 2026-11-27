@@ -107,6 +107,9 @@ A new install asks for:
 - the network's radio settings;
 - whether other machines may open the web UI;
 - whether to run the built-in MQTT broker;
+- an external MQTT broker that observers publish to, with its user and
+  password if it needs them (the password is not shown as you type it, and
+  is kept in `/etc/rradmon/mqtt_password`, readable only by Rradmon);
 - the admin password.
 
 Pressing Enter keeps the value shown in brackets. The settings are kept in
@@ -117,6 +120,8 @@ Pressing Enter keeps the value shown in brackets. The settings are kept in
 - **Update:** run the installer again. It keeps the settings and the
   database, replaces the program and restarts it. `--version 0.4.0` installs
   a given release instead of the latest.
+- **External broker, later:** `sudo sh install.sh --mqtt` sets or changes
+  it (or removes it, answering `none`), then restarts Rradmon.
 - **Admin password, later:**
   `sudo -u rradmon rradmon admin -db /var/lib/rradmon/rradmon.db set-password`
 - **Remove:** `sudo sh install.sh --uninstall` removes the program and the

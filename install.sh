@@ -5,6 +5,7 @@
 #
 #   sudo ./install.sh                  install, or update an existing install
 #   sudo ./install.sh --version 0.4.0  a given release instead of the latest
+#   sudo ./install.sh --mqtt           set or change the external MQTT broker
 #   sudo ./install.sh --uninstall      remove it (keeps the database and settings)
 #
 # Run it from an unpacked release archive and it installs the rradmon next
@@ -15,7 +16,7 @@
 # for the RNode's serial port), settings in /etc/rradmon/rradmon.conf (an
 # existing file is kept), the database in /var/lib/rradmon, and the
 # rradmon service. A new install asks for the serial port, radio settings,
-# who may open the web UI, and the admin password.
+# who may open the web UI, MQTT brokers, and the admin password.
 #
 # For testing: DESTDIR=/some/dir installs the files under that folder, and
 # DRY_RUN=1 prints the user and service commands instead of running them.
@@ -58,6 +59,50 @@ yes_no() {
   case $(ask "$1" "$2") in [Yy]*) return 0 ;; *) return 1 ;; esac
 }
 
+# ask_mqtt: the external broker that remote observers publish to. Sets
+# mqtt_opts to rradmon's options for it, and returns 1 if there is none.
+# The password goes in a file only rradmon can read, never in the settings.
+ask_mqtt() {
+  mqtt_opts=""
+  url=$(ask "External MQTT broker that observers publish to, e.g. tcp://192.168.1.10:1883 (none if there is none)" none)
+  [ "$url" = none ] && return 1
+  case $url in *" "*) die "no spaces in the broker address" ;; esac
+  case $url in *://*) ;; *) url=tcp://$url ;; esac
+  case ${url#*://} in *:*) ;; *) url=$url:1883 ;; esac
+  mqtt_opts="-mqtt $url"
+  mq_user=$(ask "Broker user (none if it needs no login)" none)
+  [ "$mq_user" = none ] && return 0
+  case $mq_user in *" "*) die "no spaces in the broker user" ;; esac
+  printf 'Password for that user (not shown): ' >&2
+  trap 'stty echo 2>/dev/null; exit 1' INT TERM
+  stty -echo 2>/dev/null || true
+  read -r mq_pass || mq_pass=""
+  stty echo 2>/dev/null || true
+  trap - INT TERM
+  echo >&2
+  [ -n "$mq_pass" ] || die "no password given"
+  mkdir -p "$CONF_DIR"
+  (umask 077; printf '%s\n' "$mq_pass" > "$CONF_DIR/mqtt_password")
+  chmod 600 "$CONF_DIR/mqtt_password"
+  run chown "$USER_NAME" "$CONF_DIR/mqtt_password"
+  mqtt_opts="$mqtt_opts -mqtt-user $mq_user -mqtt-pass-file /etc/rradmon/mqtt_password"
+}
+
+# Options without the external broker's (-mqtt, -mqtt-user, -mqtt-pass-file
+# and their values)
+strip_mqtt() {
+  out=""
+  skip=""
+  set -f
+  for w in $1; do
+    if [ -n "$skip" ]; then skip=""; continue; fi
+    case $w in -mqtt | -mqtt-user | -mqtt-pass-file) skip=1; continue ;; esac
+    out="$out $w"
+  done
+  set +f
+  echo "${out# }"
+}
+
 version=""
 action=install
 while [ $# -gt 0 ]; do
@@ -68,7 +113,8 @@ while [ $# -gt 0 ]; do
       shift 2
       ;;
     --uninstall) action=uninstall; shift ;;
-    *) echo "usage: $0 [--version X.Y.Z | --uninstall]"; exit 1 ;;
+    --mqtt) action=mqtt; shift ;;
+    *) echo "usage: $0 [--version X.Y.Z | --mqtt | --uninstall]"; exit 1 ;;
   esac
 done
 
@@ -84,6 +130,31 @@ if [ "$action" = uninstall ]; then
   rm -f "$UNIT" "$BIN"
   run systemctl daemon-reload
   say "Rradmon removed. Left in place: $DATA (the database), $CONF_DIR (settings) and the user $USER_NAME."
+  exit 0
+fi
+
+# Set or change the external broker of an existing install
+if [ "$action" = mqtt ]; then
+  [ -f "$CONF" ] || die "no $CONF: install Rradmon first"
+  [ -t 0 ] || die "--mqtt asks questions: run it in a terminal"
+  current=$(sed -n 's/^RRADMON_OPTIONS=//p' "$CONF" | tr -d '"')
+  options=$(strip_mqtt "$current")
+  if ask_mqtt; then
+    options="${options:+$options }$mqtt_opts"
+    msg="External MQTT broker set"
+  else
+    msg="No external MQTT broker"
+  fi
+  if grep -q '^RRADMON_OPTIONS=' "$CONF"; then
+    NEW=$options awk '/^RRADMON_OPTIONS=/ { print "RRADMON_OPTIONS=\"" ENVIRON["NEW"] "\""; next } { print }' \
+      "$CONF" > "$CONF.new"
+    mv -f "$CONF.new" "$CONF"
+  else
+    printf 'RRADMON_OPTIONS="%s"\n' "$options" >> "$CONF"
+  fi
+  chmod 644 "$CONF"
+  run systemctl try-restart rradmon
+  say "$msg; Rradmon restarted. Log: journalctl -u rradmon -f"
   exit 0
 fi
 
@@ -171,6 +242,9 @@ else
   options=""
   if yes_no "Run the built-in MQTT broker for observers on this machine (127.0.0.1:1883)?" n; then
     options="-mqtt-listen 127.0.0.1:1883"
+  fi
+  if ask_mqtt; then
+    options="${options:+$options }$mqtt_opts"
   fi
   if [ -z "$serial" ] && [ -z "$options" ]; then
     warn "no serial port and no broker: set -mqtt or -mqtt-listen in RRADMON_OPTIONS in $CONF before starting"
