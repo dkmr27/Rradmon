@@ -223,6 +223,8 @@ EnvironmentFile=/etc/rradmon/rradmon.conf
 StateDirectory=rradmon
 WorkingDirectory=/var/lib/rradmon
 ExecStart=/usr/local/bin/rradmon run -db /var/lib/rradmon/rradmon.db -freq ${RRADMON_FREQ} -bw ${RRADMON_BW} -sf ${RRADMON_SF} -cr ${RRADMON_CR} $RRADMON_OPTIONS
+# 0.4.0 and earlier stop cleanly on SIGINT only
+KillSignal=SIGINT
 Restart=always
 RestartSec=5
 
