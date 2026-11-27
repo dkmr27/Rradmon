@@ -49,4 +49,4 @@ Reticulum LoRa radio monitor. Single Go binary, web UI embedded, SQLite store, M
 
 ## Release builds
 
-`go run ./tools/release` cross-compiles every platform (pure Go, CGO_ENABLED=0) into `dist/` as zip/tar.gz plus a SHA256SUMS file. The version comes from `git describe --tags`, or pass `-version`. `-targets linux/arm64,windows/amd64` builds a subset. Archives are reproducible for a given commit.
+`go run ./tools/release` cross-compiles every platform (pure Go, CGO_ENABLED=0) into `dist/` as zip/tar.gz plus a SHA256SUMS file. The version comes from `git describe --tags`, or pass `-version`. `-targets linux/arm64,windows/amd64` builds a subset. Archives are reproducible for a given commit. Linux archives also carry `install.sh` (systemd service installer; it also downloads a release itself when run alone, so asset names `rradmon-<version>-<platform>.tar.gz` and `rradmon-<version>-SHA256SUMS` must stay as they are).

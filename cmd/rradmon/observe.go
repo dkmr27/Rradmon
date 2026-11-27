@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/dkmr27/Rradmon/internal/decode"
@@ -112,7 +113,7 @@ func runObserve(args []string) error {
 		return fmt.Errorf("observe: invalid observer id %q (letters, digits, . _ -; up to 64)", *id)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if *dur > 0 {
 		var cancel context.CancelFunc

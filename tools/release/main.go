@@ -41,7 +41,7 @@ var targets = []target{
 	{os: "darwin", arch: "arm64", name: "macos-arm64"},        // Apple silicon
 }
 
-// Files packed next to the binary
+// Files packed next to the binary (and install.sh in the Linux archives)
 var extras = []string{"README.md", "LICENSE"}
 
 func main() {
@@ -125,6 +125,9 @@ func run(version, only, out string) error {
 		files := []entry{{name: base + "/" + bin, src: binPath, exec: true}}
 		for _, x := range extras {
 			files = append(files, entry{name: base + "/" + x, src: x})
+		}
+		if t.os == "linux" {
+			files = append(files, entry{name: base + "/install.sh", src: "install.sh", exec: true})
 		}
 		var archive string
 		if t.os == "windows" {

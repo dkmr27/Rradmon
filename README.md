@@ -84,6 +84,55 @@ Platform notes:
 - **Linux**: your user needs access to the serial port. On Debian, Ubuntu
   and Raspberry Pi OS: `sudo usermod -aG dialout $USER`, then log out and in.
 
+### As a service on Linux (Raspberry Pi and others)
+
+To have Rradmon start at boot and restart if it stops, install it as a
+systemd service. In the folder of an unpacked Linux archive:
+
+```
+sudo ./install.sh
+```
+
+Or, without downloading anything first (it fetches the latest release for
+this machine and checks its checksum):
+
+```
+curl -fsSLO https://raw.githubusercontent.com/dkmr27/Rradmon/main/install.sh
+sudo sh install.sh
+```
+
+A new install asks for:
+
+- the RNode's serial port;
+- the network's radio settings;
+- whether other machines may open the web UI;
+- whether to run the built-in MQTT broker;
+- the admin password.
+
+Pressing Enter keeps the value shown in brackets. The settings are kept in
+`/etc/rradmon/rradmon.conf`; after changing them, run
+`sudo systemctl restart rradmon`. The database is
+`/var/lib/rradmon/rradmon.db`, and the log is in `journalctl -u rradmon -f`.
+
+- **Update:** run the installer again. It keeps the settings and the
+  database, replaces the program and restarts it. `--version 0.4.0` installs
+  a given release instead of the latest.
+- **Admin password, later:**
+  `sudo -u rradmon rradmon admin -db /var/lib/rradmon/rradmon.db set-password`
+- **Remove:** `sudo sh install.sh --uninstall` removes the program and the
+  service. It leaves the database, the settings and the `rradmon` user.
+
+To keep the data of an earlier Rradmon, stop it (Ctrl+C), install, then
+replace the new, empty database with the old one:
+
+```
+sudo systemctl stop rradmon
+sudo rm -f /var/lib/rradmon/rradmon.db*
+sudo cp rradmon.db /var/lib/rradmon/
+sudo chown -R rradmon /var/lib/rradmon
+sudo systemctl start rradmon
+```
+
 ## Quick start
 
 Find the RNode's serial port:
