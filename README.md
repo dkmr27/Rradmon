@@ -12,7 +12,7 @@ receiver heard which node and how well.
 
 Rradmon only listens. It never transmits on the radio.
 
-Status: early (0.3.0). It runs well on the author's bench; expect rough edges.
+Status: early (0.4.0). It runs well on the author's bench; expect rough edges.
 
 ## What you see
 
