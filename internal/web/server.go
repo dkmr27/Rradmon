@@ -176,13 +176,14 @@ func timeParam(r *http.Request, name string) (time.Time, bool) {
 // activity since, oldest first; ?q=<hex> narrows to a packet hash prefix.
 func (s *Server) feed(w http.ResponseWriter, r *http.Request) {
 	limit := intParam(r, "limit", 100, 500)
-	q := r.URL.Query().Get("q")
+	v := r.URL.Query()
+	f := store.FeedFilter{Hash: v.Get("q"), Dest: v.Get("dest"), From: v.Get("from"), Observer: v.Get("observer")}
 	after, _ := timeParam(r, "after")
 	before, ok := timeParam(r, "before")
 	if !ok {
 		before = time.Now().Add(time.Hour)
 	}
-	rows, err := s.st.PacketFeed(before, after, q, limit)
+	rows, err := s.st.PacketFeed(before, after, f, limit)
 	s.writeJSON(w, nonNil(rows), err)
 }
 

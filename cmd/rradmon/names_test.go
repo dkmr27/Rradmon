@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dkmr27/Rradmon/internal/store"
 )
 
 // TestNodeNameByHand names Rrptr by hand and checks the name replaces the
@@ -40,7 +42,7 @@ func TestNodeNameByHand(t *testing.T) {
 	}
 
 	// The packet feed shows it for Rrptr's destinations and as transmitter
-	rows, err := st.PacketFeed(now, time.Time{}, "", 500)
+	rows, err := st.PacketFeed(now, time.Time{}, store.FeedFilter{}, 500)
 	if err != nil {
 		t.Fatal(err)
 	}

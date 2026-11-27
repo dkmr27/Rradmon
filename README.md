@@ -19,6 +19,8 @@ Status: early (0.3.0). It runs well on the author's bench; expect rough edges.
 - **Live**: one row per packet, expanding to every reception of it (which
   observer, RSSI, SNR, hops, relay). Packet type, destination, announce
   details and proofs are decoded where Reticulum leaves them readable.
+  Filters narrow it by packet hash, destination, transmitting node (hash or
+  name) and observer, and stay live as new packets arrive.
 - **Nodes**: every destination heard, searchable by name or hash, with announce
   rates and best signal. A node page has signal history per observer and
   announce history. The admin can give any node a name and a position by hand

@@ -137,7 +137,7 @@ func TestPacketFeedAbsorbsOrphan(t *testing.T) {
 	must(t, in.Frame("A", "test", frame(0, f1, -90), true))
 	must(t, in.Frame("A", "test", frame(700, f2, -91), true))
 
-	rows, err := st.PacketFeed(t0.Add(time.Hour), time.Time{}, "", 50)
+	rows, err := st.PacketFeed(t0.Add(time.Hour), time.Time{}, store.FeedFilter{}, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestPacketFeedOrphanGroup(t *testing.T) {
 	must(t, in.Frame("B", "test", frame(5, f1, -98), true))
 	must(t, in.Frame("A", "test", frame(1300, proof, -60), true))
 	must(t, in.Frame("B", "test", frame(1310, proof, -72), true))
-	rows, err := st.PacketFeed(t0.Add(time.Hour), time.Time{}, "", 50)
+	rows, err := st.PacketFeed(t0.Add(time.Hour), time.Time{}, store.FeedFilter{}, 50)
 	if err != nil {
 		t.Fatal(err)
 	}

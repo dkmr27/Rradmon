@@ -213,6 +213,9 @@ button.hash { background: none; border: 0; padding: 0; cursor: copy; color: var(
 button.hash:hover { color: var(--text); text-decoration: underline dotted; }
 button.hash.copied::after { content: " copied"; color: var(--good); font-family: system-ui, sans-serif; }
 input.hash-search { min-width: 0; width: 170px; font-family: var(--mono); }
+.feed-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+input.feed-filter { min-width: 0; width: 170px; }
+#obsFilter { min-width: 0; max-width: 200px; }
 
 /* Map */
 .map-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; }

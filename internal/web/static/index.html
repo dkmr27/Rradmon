@@ -34,7 +34,13 @@
         <label><input type="checkbox" value="PROOF" checked> Proof</label>
         <label><input type="checkbox" value="orphan" checked> Orphans</label>
       </div>
-      <input id="hashSearch" type="search" class="hash-search" placeholder="Packet hash" title="Find packets by hash: type the start of the hex hash RNS shows" autocomplete="off" spellcheck="false">
+      <div class="feed-filters" id="feedFilters">
+        <input id="hashSearch" type="search" class="hash-search" placeholder="Packet hash" title="Find packets by hash: type the start of the hex hash RNS shows" autocomplete="off" spellcheck="false">
+        <input id="destFilter" type="search" class="feed-filter" placeholder="Destination" title="Packets to this destination: its hash (or the start of it), or part of its name" autocomplete="off" spellcheck="false">
+        <input id="fromFilter" type="search" class="feed-filter" placeholder="From" title="Packets transmitted by this node: its identity hash (or the start of it), or part of its name" autocomplete="off" spellcheck="false">
+        <select id="obsFilter" title="Packets this observer heard, first or not"><option value="">All observers</option></select>
+        <button id="clearFilters" class="btn" hidden>Clear</button>
+      </div>
       <button id="pauseBtn" class="btn">Pause</button>
       <span class="muted small" id="searchNote"></span>
     </div>

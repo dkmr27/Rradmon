@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dkmr27/Rradmon/internal/reticulum"
+	"github.com/dkmr27/Rradmon/internal/store"
 )
 
 // signedAnnounce builds a valid announce for `app` with app data, as one raw
@@ -80,7 +81,7 @@ func TestDiscoveryPlacesNode(t *testing.T) {
 		t.Errorf("identity %s, want %s", n.Identity, hexs(ident))
 	}
 
-	rows, err := st.PacketFeed(t0.Add(time.Hour), time.Time{}, "", 10)
+	rows, err := st.PacketFeed(t0.Add(time.Hour), time.Time{}, store.FeedFilter{}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

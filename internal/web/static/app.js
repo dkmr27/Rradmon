@@ -99,7 +99,7 @@ async function loadSummary() {
 // One row group per packet: a summary line showing the first complete
 // observation, and (expanded) one line per observation from every observer.
 // Unmatched orphan groups are row groups of their own.
-const feed = { rows: new Map(), newest: 0, oldest: Infinity, paused: false, open: new Set(), search: "" };
+const feed = { rows: new Map(), newest: 0, oldest: Infinity, paused: false, open: new Set(), filter: { q: "", dest: "", from: "", observer: "" } };
 const MAX_ROWS = 600;
 
 function typeFilter() { return new Set($$("#typeFilter input:checked").map((i) => i.value)); }
@@ -304,28 +304,51 @@ function reloadFeedNames() {
   clearFeed();
   loadFeed().catch(console.error);
 }
+// The feed's filters as query parameters, and in words
+function filterQuery() {
+  const f = feed.filter;
+  return Object.entries(f).filter(([, v]) => v).map(([k, v]) => `&${k}=${encodeURIComponent(v)}`).join("");
+}
+const filterActive = () => Object.values(feed.filter).some(Boolean);
+function filterWords() {
+  const f = feed.filter, w = [];
+  if (f.q) w.push(`hash ${f.q}…`);
+  if (f.dest) w.push(`to “${f.dest}”`);
+  if (f.from) w.push(`from “${f.from}”`);
+  if (f.observer) w.push(`heard by ${f.observer}`);
+  return w.join(", ");
+}
+function showFilterNote() {
+  const active = filterActive();
+  $("#clearFilters").hidden = !active;
+  if (!active) { $("#searchNote").textContent = ""; return; }
+  const n = feed.rows.size;
+  $("#searchNote").textContent = n
+    ? `${n} packet${n > 1 ? "s" : ""} ${filterWords()}${$("#olderBtn").disabled ? "" : " so far"}`
+    : `No packets ${filterWords()}`;
+}
 async function loadFeed() {
-  const q = feed.search ? `&q=${encodeURIComponent(feed.search)}` : "";
-  const rows = await api(`/api/feed?limit=150${q}`);
+  const rows = await api(`/api/feed?limit=150${filterQuery()}`);
   rows.forEach((r) => upsert(r, false));
-  $("#searchNote").textContent = feed.search
-    ? rows.length ? `${rows.length} packet${rows.length > 1 ? "s" : ""} with hash ${feed.search}…` : `No packet with hash ${feed.search}…`
-    : "";
+  if (filterActive() && rows.length < 150) $("#olderBtn").disabled = true;
+  showFilterNote();
 }
 async function catchUp() {
-  if (feed.paused || feed.search) return;
+  if (feed.paused) return;
   // Rows with any activity since the newest we have: new packets, and new
-  // observations of packets already shown (relayed copies, other observers)
-  const rows = await api(`/api/feed?after=${feed.newest - 1}&limit=500`);
+  // observations of packets already shown (relayed copies, other observers).
+  // The filters apply here too, so a filtered feed stays live.
+  const rows = await api(`/api/feed?after=${feed.newest - 1}&limit=500${filterQuery()}`);
   rows.forEach((r) => upsert(r, true));
   trim();
+  if (rows.length && filterActive()) showFilterNote();
 }
 $("#olderBtn").onclick = async () => {
   if (!isFinite(feed.oldest)) return;
-  const q = feed.search ? `&q=${encodeURIComponent(feed.search)}` : "";
-  const rows = await api(`/api/feed?before=${feed.oldest}&limit=150${q}`);
+  const rows = await api(`/api/feed?before=${feed.oldest}&limit=150${filterQuery()}`);
   rows.forEach((r) => upsert(r, false));
-  if (!rows.length) $("#olderBtn").disabled = true;
+  if (rows.length < 150) $("#olderBtn").disabled = true;
+  showFilterNote();
 };
 $("#pauseBtn").onclick = () => {
   feed.paused = !feed.paused;
@@ -365,15 +388,39 @@ $("#feedTable").addEventListener("click", async (e) => {
   const tog = e.target.closest("button.expand");
   if (tog) toggleGroup(tog.closest("tbody"));
 });
-let hashTimer;
-$("#hashSearch").oninput = () => {
-  clearTimeout(hashTimer);
-  hashTimer = setTimeout(() => {
-    feed.search = $("#hashSearch").value.trim().toLowerCase().replace(/[^0-9a-f]/g, "");
-    clearFeed();
-    loadFeed().catch(console.error);
-  }, 300);
+// Filters: typing waits a moment before reloading; the observer list fills
+// from the observers known when the menu is opened
+let filterTimer;
+function setFilters() {
+  feed.filter = {
+    q: $("#hashSearch").value.trim().toLowerCase().replace(/[^0-9a-f]/g, ""),
+    dest: $("#destFilter").value.trim(),
+    from: $("#fromFilter").value.trim(),
+    observer: $("#obsFilter").value,
+  };
+  clearFeed();
+  loadFeed().catch(console.error);
+}
+for (const id of ["#hashSearch", "#destFilter", "#fromFilter"]) {
+  $(id).oninput = () => { clearTimeout(filterTimer); filterTimer = setTimeout(setFilters, 300); };
+}
+$("#obsFilter").onchange = setFilters;
+$("#clearFilters").onclick = () => {
+  for (const id of ["#hashSearch", "#destFilter", "#fromFilter"]) $(id).value = "";
+  $("#obsFilter").value = "";
+  setFilters();
 };
+async function fillObserverFilter() {
+  const sel = $("#obsFilter");
+  const list = await api("/api/observers");
+  const keep = sel.value;
+  const ids = list.map((o) => o.ext_id).sort();
+  if (keep && !ids.includes(keep)) ids.unshift(keep);
+  sel.replaceChildren(new Option("All observers", ""), ...ids.map((id) => new Option(id, id)));
+  sel.value = keep;
+}
+$("#obsFilter").addEventListener("focus", () => fillObserverFilter().catch(console.error));
+fillObserverFilter().catch(console.error);
 
 // ---------- live stream ----------
 let lastNodesRefresh = 0;

@@ -65,11 +65,23 @@ type PacketRow struct {
 	GroupObservers []string `json:"group_observers,omitempty"`
 }
 
+// FeedFilter narrows the packet feed. Every field set must match.
+type FeedFilter struct {
+	Hash     string // hex: the packet's full or truncated hash starts with it
+	Dest     string // destination: hex hash (start of it), or part of its name
+	From     string // transmitting node: hex identity hash (start of it), or part of its name
+	Observer string // an observer id: it heard the packet (or the orphan)
+}
+
+// Packets only: orphan groups have no parsed header to match against
+func (f FeedFilter) packetsOnly() bool { return f.Hash != "" || f.Dest != "" || f.From != "" }
+
 // PacketFeed lists packets and orphan groups. With after set it returns rows
 // with any activity since then (new receptions update older rows), oldest
-// first; otherwise rows first heard before `before`, newest first. hashPrefix
-// (hex) narrows to packets whose full or truncated hash starts with it.
-func (s *Store) PacketFeed(before, after time.Time, hashPrefix string, limit int) ([]PacketRow, error) {
+// first; otherwise rows first heard before `before`, newest first. f narrows
+// the rows; orphan groups are left out when it names a hash, destination or
+// transmitter.
+func (s *Store) PacketFeed(before, after time.Time, f FeedFilter, limit int) ([]PacketRow, error) {
 	catchUp := !after.IsZero()
 	var where, order string
 	var args []any
@@ -80,13 +92,33 @@ func (s *Store) PacketFeed(before, after time.Time, hashPrefix string, limit int
 		where, order = "p.first_seen < ?", "DESC"
 		args = append(args, ms(before))
 	}
-	hashPrefix = strings.ToUpper(strings.TrimSpace(hashPrefix))
-	if hashPrefix != "" {
-		if _, err := hex.DecodeString(hashPrefix + strings.Repeat("0", len(hashPrefix)%2)); err != nil {
+	f.Hash = strings.ToUpper(strings.TrimSpace(f.Hash))
+	f.Dest, f.From, f.Observer = strings.TrimSpace(f.Dest), strings.TrimSpace(f.From), strings.TrimSpace(f.Observer)
+	if f.Hash != "" {
+		if !isHex(f.Hash) {
 			return nil, nil // not hex: nothing matches
 		}
 		where += " AND (hex(p.full_hash) LIKE ? OR hex(p.hash) LIKE ?)"
-		args = append(args, hashPrefix+"%", hashPrefix+"%")
+		args = append(args, f.Hash+"%", f.Hash+"%")
+	}
+	if f.Dest != "" {
+		c, a := hashOrName("p.dest_hash", f.Dest, `SELECT hash FROM destinations WHERE display_name LIKE ? ESCAPE '!'
+			OR identity_hash IN (SELECT identity_hash FROM node_names WHERE name LIKE ? ESCAPE '!')`)
+		where += " AND " + c
+		args = append(args, a...)
+	}
+	if f.From != "" {
+		names := `SELECT identity_hash FROM node_names WHERE name LIKE ? ESCAPE '!'
+			UNION SELECT identity_hash FROM destinations WHERE display_name LIKE ? ESCAPE '!'`
+		c1, a1 := hashOrName("p.tx_identity", f.From, names)
+		c2, a2 := hashOrName("x.tx_identity", f.From, names)
+		where += " AND (" + c1 + " OR EXISTS (SELECT 1 FROM receptions x WHERE x.packet_id = p.id AND " + c2 + "))"
+		args = append(append(args, a1...), a2...)
+	}
+	if f.Observer != "" {
+		where += ` AND EXISTS (SELECT 1 FROM receptions x JOIN observers ox ON ox.id = x.observer_id
+			WHERE x.packet_id = p.id AND ox.ext_id = ?)`
+		args = append(args, f.Observer)
 	}
 	args = append(args, limit)
 
@@ -157,8 +189,8 @@ func (s *Store) PacketFeed(before, after time.Time, hashPrefix string, limit int
 	}
 	rows.Close()
 
-	if hashPrefix == "" {
-		orphans, err := s.orphanGroups(catchUp, before, after, limit)
+	if !f.packetsOnly() {
+		orphans, err := s.orphanGroups(catchUp, before, after, f.Observer, limit)
 		if err != nil {
 			return nil, err
 		}
@@ -177,13 +209,42 @@ func (s *Store) PacketFeed(before, after time.Time, hashPrefix string, limit int
 	return out, nil
 }
 
+func isHex(s string) bool {
+	_, err := hex.DecodeString(s + strings.Repeat("0", len(s)%2))
+	return s != "" && err == nil
+}
+
+// hashOrName matches a hash column against v: a whole hash exactly (which
+// the indexes serve), the start of one, or part of a name, which names
+// turns into hashes (a subquery with two LIKE placeholders).
+func hashOrName(col, v, names string) (string, []any) {
+	esc := strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(v)
+	like := "%" + esc + "%"
+	nameCond := col + " IN (" + names + ")"
+	if !isHex(v) {
+		return nameCond, []any{like, like}
+	}
+	if len(v) == 32 {
+		b, _ := hex.DecodeString(v)
+		return "(" + col + " = ? OR " + nameCond + ")", []any{b, like, like}
+	}
+	return "(hex(" + col + ") LIKE ? OR " + nameCond + ")", []any{strings.ToUpper(v) + "%", like, like}
+}
+
 // orphanGroups lists unmatched orphan groups, one row per group.
-func (s *Store) orphanGroups(catchUp bool, before, after time.Time, limit int) ([]PacketRow, error) {
+func (s *Store) orphanGroups(catchUp bool, before, after time.Time, observer string, limit int) ([]PacketRow, error) {
 	cond, order, t := "f.t < ?", "DESC", ms(before)
 	if catchUp {
 		// any member heard since: a late observer joining the group updates it
 		cond, order, t = "(SELECT MAX(t) FROM frame_errors g WHERE COALESCE(g.group_id, g.id) = f.id) > ?", "ASC", ms(after)
 	}
+	args := []any{t}
+	if observer != "" {
+		cond += ` AND EXISTS (SELECT 1 FROM frame_errors g JOIN observers og ON og.id = g.observer_id
+			WHERE COALESCE(g.group_id, g.id) = f.id AND og.ext_id = ?)`
+		args = append(args, observer)
+	}
+	args = append(args, limit)
 	rows, err := s.DB.Query(`
 		SELECT f.id, f.t, (SELECT MAX(t) FROM frame_errors g WHERE COALESCE(g.group_id, g.id) = f.id),
 			f.kind, f.len, f.rssi, f.snr, f.data, o.ext_id,
@@ -193,7 +254,7 @@ func (s *Store) orphanGroups(catchUp bool, before, after time.Time, limit int) (
 			f.proof_packet_id, (SELECT first_seen FROM packets WHERE id = f.proof_packet_id) - f.t
 		FROM frame_errors f JOIN observers o ON o.id = f.observer_id
 		WHERE f.matched_packet_id IS NULL AND f.id = COALESCE(f.group_id, f.id) AND `+cond+`
-		ORDER BY f.t `+order+` LIMIT ?`, t, limit)
+		ORDER BY f.t `+order+` LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
