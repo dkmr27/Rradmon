@@ -209,6 +209,7 @@ func init() {
 		"lxmf.delivery",
 		"lxmf.propagation",
 		"nomadnetwork.node",
+		"rrc.hub", // Reticulum Relay Chat hubs (rrcd)
 	} {
 		wellKnownNames[string(NameHash(n))] = n
 	}

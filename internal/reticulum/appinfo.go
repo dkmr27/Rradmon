@@ -140,8 +140,35 @@ func AppLabel(nameHash []byte) string {
 		return "Remote management"
 	case "rnstransport.info.blackhole":
 		return "Blackhole list"
+	case "rrc.hub":
+		return "RRC hub"
 	}
 	return ""
+}
+
+// RRCHub is what an rrcd (Reticulum Relay Chat) hub announces: a CBOR map
+// {"proto": "rrc", "v": 1, "hub": "<hub name>"}.
+type RRCHub struct {
+	Name    string
+	Proto   string
+	Version int64
+}
+
+// ParseRRCHub reads an rrc.hub announce's app data.
+func ParseRRCHub(appData []byte) (RRCHub, bool) {
+	v, _, err := cborDecode(appData)
+	if err != nil {
+		return RRCHub{}, false
+	}
+	m, ok := v.(map[any]any)
+	if !ok {
+		return RRCHub{}, false
+	}
+	var h RRCHub
+	h.Name, _ = m["hub"].(string)
+	h.Proto, _ = m["proto"].(string)
+	h.Version, _ = integer(m["v"])
+	return h, h.Name != "" || h.Proto != ""
 }
 
 // DescribeAnnounce summarises an announce's app data by its app (name hash).
@@ -222,6 +249,27 @@ func DescribeAnnounce(nameHash, appData []byte) AnnounceInfo {
 		}
 		return done()
 	case "lxmf.propagation":
+		return done()
+	case "rrc.hub":
+		if len(appData) == 0 {
+			return done()
+		}
+		h, ok := ParseRRCHub(appData)
+		if !ok {
+			parts = append(parts, "data unreadable")
+			return done()
+		}
+		info.Name = clean(h.Name)
+		if info.Name != "" {
+			parts = append(parts, fmt.Sprintf("%q", info.Name))
+		}
+		if h.Proto != "" {
+			proto := clean(h.Proto)
+			if h.Version > 0 {
+				proto += fmt.Sprintf(" v%d", h.Version)
+			}
+			parts = append(parts, proto)
+		}
 		return done()
 	}
 	if len(appData) == 0 {

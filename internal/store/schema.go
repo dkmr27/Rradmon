@@ -231,4 +231,12 @@ CREATE TABLE node_names (
 	set_t         INTEGER NOT NULL
 );
 `,
+	// 10: rrcd hubs (rrc.hub, name hash ac9fd3a81e4036f86e1d) are now known and
+	// their CBOR app data read. Hubs announce rarely (by default only when
+	// started), so name the ones already stored and rebuild their summaries
+	// and names from their latest announce.
+	`
+UPDATE destinations SET app_name = 'rrc.hub', info = NULL, info_t = NULL
+	WHERE name_hash = X'ac9fd3a81e4036f86e1d';
+`,
 }

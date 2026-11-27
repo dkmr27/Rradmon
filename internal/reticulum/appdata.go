@@ -9,9 +9,17 @@ import (
 // DisplayName extracts a human-readable name from announce app data, best
 // effort. NomadNet nodes announce a plain UTF-8 name; LXMF delivery
 // destinations announce a msgpack array whose first element is the name
-// (older versions sent the name as plain bytes). Returns "" if none is found.
+// (older versions sent the name as plain bytes); rrcd hubs a CBOR map with
+// the hub's name. Returns "" if none is found.
 func DisplayName(nameHash, appData []byte) string {
 	if len(appData) == 0 {
+		return ""
+	}
+	// rrcd hubs announce a CBOR map with the hub's name
+	if WellKnownName(nameHash) == "rrc.hub" {
+		if h, ok := ParseRRCHub(appData); ok {
+			return clean(h.Name)
+		}
 		return ""
 	}
 	if b := appData[0]; b > 0x90 && b <= 0x9f { // non-empty fixarray

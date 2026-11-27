@@ -197,7 +197,9 @@ every announce's app data is summarised in one line for the live view and
 the node page. Discovery: name, interface, implementation and version, radio
 settings, reachable-on and IFAC network name when present, and "position"
 with height (never the coordinates in the summary). LXMF delivery: display
-name and stamp cost. NomadNet and other printable app data: the text.
+name and stamp cost. rrcd hubs (`rrc.hub`, Reticulum Relay Chat; a CBOR map,
+read with a bounded CBOR decoder): the hub name and protocol version, e.g.
+`RRC hub · "MyHub" · rrc v1`. NomadNet and other printable app data: the text.
 A valid discovery announce sets its destination's lat, lon, height and
 `pos_source = 'discovery'`; the newest announce wins. The map shows each node
 at its newest announced position, and observers at the position they report
