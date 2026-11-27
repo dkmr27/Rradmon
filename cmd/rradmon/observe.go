@@ -31,6 +31,18 @@ func brokerFlags(fs *flag.FlagSet) *mqtt.BrokerConfig {
 	return c
 }
 
+// listenFlags configure the built-in MQTT broker (rradmon run).
+func listenFlags(fs *flag.FlagSet) *mqtt.ListenConfig {
+	c := &mqtt.ListenConfig{}
+	fs.StringVar(&c.Addr, "mqtt-listen", "", "run a built-in MQTT broker for observers on this address, e.g. 127.0.0.1:1883 "+
+		"(this machine only, no password needed); any other address needs -mqtt-listen-user")
+	fs.StringVar(&c.Username, "mqtt-listen-user", "", "user observers log in to the built-in broker with")
+	fs.StringVar(&c.PasswordFile, "mqtt-listen-pass-file", "", "file holding that password (else $RRADMON_MQTT_LISTEN_PASSWORD)")
+	fs.BoolVar(&c.AllowOpen, "mqtt-listen-open", false, "allow a non-loopback -mqtt-listen without a password "+
+		"(only where a firewall or a Docker port on the host's loopback limits who can connect)")
+	return c
+}
+
 // chanIntervalFlag is how often channel reports (noise floor, utilisation)
 // are stored or published.
 func chanIntervalFlag(fs *flag.FlagSet) *time.Duration {

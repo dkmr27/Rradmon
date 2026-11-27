@@ -59,6 +59,27 @@ type SubscribeOptions struct {
 	Allow []string
 }
 
+// NewIntake returns a Subscriber that is not connected to a broker: the
+// built-in broker (StartBroker) feeds it. Its checks, rate limits and
+// counters are the same as for an external broker.
+func NewIntake(prefix string, h Handler, opt SubscribeOptions, log *slog.Logger) *Subscriber {
+	if log == nil {
+		log = slog.Default()
+	}
+	if prefix == "" {
+		prefix = DefaultPrefix
+	}
+	s := &Subscriber{prefix: strings.TrimSuffix(prefix, "/"), h: h, log: log,
+		buckets: map[string]*bucket{}, lastSeq: map[string]uint64{}, stats: map[string]*SubStats{}}
+	if len(opt.Allow) > 0 {
+		s.allow = map[string]bool{}
+		for _, id := range opt.Allow {
+			s.allow[id] = true
+		}
+	}
+	return s
+}
+
 // NewSubscriber connects and subscribes to <prefix>/+/+/{rx,chan,status}.
 func NewSubscriber(cfg BrokerConfig, h Handler, opt SubscribeOptions, log *slog.Logger) (*Subscriber, error) {
 	if log == nil {
@@ -70,14 +91,7 @@ func NewSubscriber(cfg BrokerConfig, h Handler, opt SubscribeOptions, log *slog.
 		// would keep knocking each other off.
 		cfg.ClientID = uniqueClientID("rradmon-server")
 	}
-	s := &Subscriber{prefix: cfg.prefix(), h: h, log: log,
-		buckets: map[string]*bucket{}, lastSeq: map[string]uint64{}, stats: map[string]*SubStats{}}
-	if len(opt.Allow) > 0 {
-		s.allow = map[string]bool{}
-		for _, id := range opt.Allow {
-			s.allow[id] = true
-		}
-	}
+	s := NewIntake(cfg.prefix(), h, opt, log)
 	o, err := cfg.options(log)
 	if err != nil {
 		return nil, err
@@ -101,8 +115,12 @@ func NewSubscriber(cfg BrokerConfig, h Handler, opt SubscribeOptions, log *slog.
 	return s, nil
 }
 
-// Close disconnects.
-func (s *Subscriber) Close() { s.c.Disconnect(500) }
+// Close disconnects from the external broker, if any.
+func (s *Subscriber) Close() {
+	if s.c != nil {
+		s.c.Disconnect(500)
+	}
+}
 
 // Stats returns a copy of the per-observer counters.
 func (s *Subscriber) Stats() map[string]SubStats {

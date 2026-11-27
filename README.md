@@ -156,6 +156,41 @@ Topics are `rradmon/v1/<network>/<observer>/rx`, `…/chan` and `…/status`
 access rules can limit each observer to its own topics. The message format is
 in [docs/spec-v0.md](docs/spec-v0.md), section 5.
 
+### Without a broker: the built-in one
+
+`rradmon run` can be the broker itself. Observers then publish straight to
+it, and nothing else needs installing:
+
+```
+rradmon run -mqtt-listen 127.0.0.1:1883
+```
+
+On `127.0.0.1` only programs on the same machine can connect, and no password
+is needed: for example [Rrnodemon](https://github.com/dkmr27/Rrnodemon) next
+to rnsd, or `rradmon observe` with `-mqtt tcp://127.0.0.1:1883`.
+
+For observers on other machines (Rrobs boards, `rradmon observe` on a
+Raspberry Pi), listen on the network and give them a user and password:
+
+```
+rradmon run -mqtt-listen 0.0.0.0:1883 -mqtt-listen-user observers -mqtt-listen-pass-file observers.pass
+```
+
+- Any address other than loopback needs `-mqtt-listen-user` and a password
+  (`-mqtt-listen-pass-file`, or `RRADMON_MQTT_LISTEN_PASSWORD`); Rradmon
+  refuses to start otherwise. `-mqtt-listen-open` allows it without one, for
+  where a firewall already limits who can connect.
+- Clients can publish only Rradmon's own topics (`<prefix>/<network>/<observer>/rx`,
+  `chan` and `status`) and read only under the prefix. Observers go through
+  the same checks and rate limits as through an external broker.
+- The connection is plain MQTT, so the password crosses the network
+  unencrypted: keep it to your own network, and use a broker with TLS
+  (`ssl://`) beyond it.
+- `-mqtt-listen` and `-mqtt` work together: Rradmon then takes observers from
+  both.
+- Up to 64 clients, 8 KB messages. The broker keeps nothing on disk; observers
+  send their status again within a minute after a restart.
+
 ## Admin and settings
 
 Anyone who can open the web UI can view it. Changes need the admin password:
@@ -257,6 +292,10 @@ Notes:
 - Inside the container Rradmon listens on all interfaces (`RRADMON_HTTP`
   is set to `0.0.0.0:8080`); the `-p` mapping on the host decides who can
   reach it. `-p 127.0.0.1:8080:8080` keeps it to the host.
+- For the built-in broker in a container, listen on all of the container's
+  interfaces and let the port mapping decide who reaches it:
+  `-mqtt-listen 0.0.0.0:1883` with `-p 127.0.0.1:1883:1883` (this host only,
+  add `-mqtt-listen-open`), or with `-p 1883:1883` and a user and password.
 - The container has no time zone data, so its log is in UTC. The web UI
   shows times in your browser's time zone.
 - To build for other platforms from one machine:
@@ -274,12 +313,14 @@ Notes:
   requests from other sites are refused, and logins are rate limited.
 - Data from observers is treated as untrusted: lengths, ranges and text are
   checked and cleaned before they are stored or shown.
+- The built-in MQTT broker (`-mqtt-listen`) is off unless asked for, and only
+  listens beyond this computer with a password (or `-mqtt-listen-open`).
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `rradmon run` | Read an RNode and/or MQTT observers, store what they hear, serve the web UI |
+| `rradmon run` | Read an RNode and/or MQTT observers (from a broker, or its built-in one), store what they hear, serve the web UI |
 | `rradmon serve` | Web UI for an existing database, no radio |
 | `rradmon observe` | Read an RNode and publish to MQTT as an observer |
 | `rradmon admin` | Set or clear the admin password |

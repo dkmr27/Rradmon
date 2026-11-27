@@ -43,14 +43,15 @@ func runRun(args []string) error {
 	lon := fs.Float64("lon", 0, "position of the local RNode (optional)")
 	broker := brokerFlags(fs)
 	allow := fs.String("mqtt-allow", "", "comma-separated observer ids to accept (default all)")
+	listen := listenFlags(fs)
 	chanEvery := chanIntervalFlag(fs)
 	fs.Parse(args)
 	if err := checkChanInterval(*chanEvery); err != nil {
 		return err
 	}
-	if *port == "" && broker.URL == "" {
+	if *port == "" && broker.URL == "" && listen.Addr == "" {
 		fs.Usage()
-		return errors.New("run: give -port, -mqtt, or both")
+		return errors.New("run: give -port, -mqtt or -mqtt-listen (one or more)")
 	}
 
 	st, err := store.Open(*dbPath)
@@ -90,17 +91,33 @@ func runRun(args []string) error {
 		defer cancel()
 	}
 
-	if broker.URL != "" {
+	if broker.URL != "" || listen.Addr != "" {
 		var ids []string
 		if *allow != "" {
 			ids = strings.Split(*allow, ",")
 		}
 		h := &mqttIngest{in: in, st: st, network: radio.Slug(), log: log}
-		sub, err := mqtt.NewSubscriber(*broker, h, mqtt.SubscribeOptions{Allow: ids}, log)
-		if err != nil {
-			return err
+		// One intake for both: observers are checked and counted the same
+		// whether they come through an external broker or the built-in one
+		var sub *mqtt.Subscriber
+		if broker.URL != "" {
+			sub, err = mqtt.NewSubscriber(*broker, h, mqtt.SubscribeOptions{Allow: ids}, log)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "Subscribed to %s for network %s.\n", broker.Redacted(), radio.Slug())
+		} else {
+			sub = mqtt.NewIntake(broker.Prefix, h, mqtt.SubscribeOptions{Allow: ids}, log)
 		}
 		defer sub.Close()
+		if listen.Addr != "" {
+			b, err := mqtt.StartBroker(*listen, sub, log)
+			if err != nil {
+				return err
+			}
+			defer b.Close()
+			fmt.Fprintf(os.Stderr, "Observers can publish to mqtt://%s (network %s).\n", listen.Addr, radio.Slug())
+		}
 		if ws != nil {
 			ws.Counters = func() map[string]web.Counters {
 				out := map[string]web.Counters{}
@@ -111,7 +128,6 @@ func runRun(args []string) error {
 				return out
 			}
 		}
-		fmt.Fprintf(os.Stderr, "Subscribed to %s for network %s.\n", broker.Redacted(), radio.Slug())
 	}
 
 	// Nil channels never fire, so the loop below also works without a radio.

@@ -324,6 +324,15 @@ As implemented (`internal/mqtt`, 2026-11-12):
   optional allowlist (`run -mqtt-allow`). `seq` gaps are counted per
   observer; a seq of 1 is treated as an observer restart.
 - QoS 1 for `rx` and `status` (retained, also the last will), QoS 0 for `chan`.
+- Built-in broker (`run -mqtt-listen host:port`, mochi-mqtt, 2026-11-27):
+  observers may publish to it instead of an external broker. Messages go to
+  the same checks, rate limits and counters as from an external broker,
+  in-process. Loopback needs no login; any other address needs
+  `-mqtt-listen-user` and a password (file or `RRADMON_MQTT_LISTEN_PASSWORD`),
+  or `-mqtt-listen-open`. Clients may publish only
+  `<prefix>/<network>/<observer>/(rx|chan|status)` with a valid observer id
+  and read only under the prefix. Limits: 64 clients, 8 KB packets,
+  disconnected sessions kept 1 hour; nothing stored on disk.
 - Status carries `sw` (software) and `fw` (radio firmware) as well.
 - Credentials: username flag, password from a file (`-mqtt-pass-file`) or
   `RRADMON_MQTT_PASSWORD`, never a flag or the URL. TLS (`ssl://`, `wss://`)
